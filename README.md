@@ -1,45 +1,10 @@
-# Skills Repo
+# Skills_Repo
 
-红运团队的技能仓库 | Red Team's Skill Repository
-
-## 用途
-
-这个仓库用于管理我们团队自己创建和维护的 OpenClaw Skills。
-
-## 目录结构
-
-```
-skills-repo/
-├── README.md              # 本文件
-├── skills/                # 技能目录
-│   └── {skill-name}/      # 单个技能文件夹
-│       ├── SKILL.md       # 技能文档（必须）
-│       ├── skill.json     # 技能配置（必须）
-│       └── ...            # 其他文件
-└── docs/                  # 文档
-```
+Noah和他的AI助理们开发的skills仓库，全部开源，欢迎取用。如果你觉得对你有帮助，可以帮我买杯咖啡，感谢~~
 
 ## 技能列表
 
-| 技能名称 | 版本 | 描述 | 状态 |
-|----------|------|------|------|
-| _待添加_ | - | - | - |
-
-## Clawhub 发布
-
-技能开发完成后，可以通过 Clawhub CLI 发布：
-
-```bash
-clawhub publish skills/{skill-name}
-```
-
-## 开发规范
-
-1. 每个技能必须有 `SKILL.md` 和 `skill.json`
-2. 遵循 OpenClaw AgentSkills 规范
-3. 版本号遵循 SemVer
-4. 测试通过后再提交
-
----
-
-*Team: 红运 | Created: 2026-03-15*
+| 技能名称 | 技能描述 | 当前版本 | 发布日期 |
+|----------|----------|----------|----------|
+| longtask_system | 长程任务管理系统，状态驱动的任务编排引擎 | 1.1.0 | 2026-03-15 |
+| ec_creator | 执行卡片创建工具，EC校验和自动修复 | 1.1.0 | 2026-03-15 |
