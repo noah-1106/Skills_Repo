@@ -17,3 +17,9 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **技能描述 / Description**：EC校验和自动修复工具，用于创建标准化执行卡片 / Validation and auto-fix tool for creating standardized Execution Cards
 - **当前版本 / Version**：1.1.0
 - **发布日期 / Date**：2026-03-15
+
+### zhihu-fetcher
+- **技能名称 / Name**：知乎数据获取 / Zhihu Fetcher
+- **技能描述 / Description**：知乎数据抓取工具，支持三级认证降级机制（Browser Profile → File Cookie → Fallback），确保数据可靠获取 / Zhihu data fetching tool with three-level authentication fallback mechanism
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-03-15
