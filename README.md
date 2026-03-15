@@ -1,6 +1,7 @@
 ![Skills_Repo Banner](docs/Skills_Repo.jpg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Open Collective](https://img.shields.io/opencollective/all/noah-tan?label=Support%20Me&logo=open-collective&color=7B99FF)](https://opencollective.com/noah-tan)
 
 # Skills_Repo
 
