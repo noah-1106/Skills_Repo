@@ -2,7 +2,7 @@
 
 Noah和他的AI助理们开发的skills仓库，全部开源，欢迎取用。如果你觉得对你有帮助，可以帮我买杯咖啡，感谢~~
 
-A skill repository developed by Noah and his AI assistants. All open source, feel free to use. If you find it helpful, consider buying me a coffee. Thanks~~
+A skill repository developed by Noah and his AI assistants. All open source, feel free to use. Buy me a coffee if you find it helpful :) Thanks~~
 
 ## 技能列表 / Skills
 
