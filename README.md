@@ -1,3 +1,5 @@
+![Skills_Repo Banner](docs/Skills_Repo.jpg)
+
 # Skills_Repo
 
 Noah和他的AI助理们开发的skills仓库，全部开源，欢迎取用。如果你觉得对你有帮助，可以帮我买杯咖啡，感谢~~
