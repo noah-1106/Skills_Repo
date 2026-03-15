@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>微博热搜 - 数据可视化</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #f5f5f5;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);
+            color: white;
+            padding: 25px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header h1::before { content: "📱"; }
+        .header .meta {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        
+        .filters {
+            background: white;
+            padding: 20px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .filter-group label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .filter-group select,
+        .filter-group input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            min-width: 120px;
+        }
+        
+        .channel-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .channel-tab {
+            padding: 6px 14px;
+            border: 2px solid #ddd;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            background: white;
+        }
+        
+        .channel-tab:hover { border-color: #999; }
+        
+        .channel-tab.active {
+            border-color: transparent;
+            color: white;
+        }
+        
+        .channel-tab.all.active { background: #333; }
+        .channel-tab.hot.active { background: #ff6b6b; }
+        .channel-tab.social.active { background: #4ecdc4; }
+        .channel-tab.entertainment.active { background: #a55eea; }
+        .channel-tab.life.active { background: #26de81; }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #666;
+        }
+        
+        .btn-secondary:hover { background: #e0e0e0; }
+        
+        .stats {
+            background: #fff5f5;
+            padding: 12px 20px;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .stats .highlight { color: #ff6b6b; font-weight: 600; }
+        
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .hot-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .hot-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 16px 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        
+        .hot-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .rank {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            margin-right: 16px;
+            flex-shrink: 0;
+        }
+        
+        .rank.top1 { background: linear-gradient(135deg, #ff6b6b, #ee5a5a); color: white; }
+        .rank.top2 { background: linear-gradient(135deg, #ffa94d, #ff8c42); color: white; }
+        .rank.top3 { background: linear-gradient(135deg, #ffd43b, #fcc419); color: #333; }
+        .rank.normal { background: #f0f0f0; color: #666; }
+        
+        .item-content { flex: 1; min-width: 0; }
+        
+        .item-title {
+            font-size: 15px;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        
+        .item-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .channel-badge {
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            color: white;
+        }
+        
+        .heat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #ff6b6b;
+            font-weight: 500;
+        }
+        
+        .tag-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .empty {
+            text-align: center;
+            padding: 80px 20px;
+            color: #999;
+        }
+        
+        .empty-icon { font-size: 48px; margin-bottom: 16px; }
+        
+        @media (max-width: 640px) {
+            .filters { padding: 15px; gap: 12px; }
+            .content { padding: 12px; }
+            .hot-item { padding: 12px 15px; }
+            .rank { width: 32px; height: 32px; font-size: 14px; margin-right: 12px; }
+            .item-title { font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>微博热搜数据可视化</h1>
+        <div class="meta">
+            更新时间: 2026-03-16 04:40 | 
+            数据范围: 2026-03-15 ~ 2026-03-15 | 
+            共 40 条记录
+        </div>
+    </div>
+    
+    <div class="filters">
+        <div class="filter-group">
+            <label>选择日期</label>
+            <select id="dateSelect">
+                <option value="">全部日期</option>
+                <option value="2026-03-15">2026-03-15</option>
+            </select>
+        </div>
+        
+        <div class="filter-group">
+            <label>频道筛选</label>
+            <div class="channel-tabs" id="channelTabs">
+                <span class="channel-tab all active" data-channel="">全部</span>
+                <span class="channel-tab entertainment" data-channel="entertainment" style="border-color: #a55eea; color: #a55eea;">文娱榜</span>
+                <span class="channel-tab hot" data-channel="hot" style="border-color: #ff6b6b; color: #ff6b6b;">热搜总榜</span>
+                <span class="channel-tab life" data-channel="life" style="border-color: #26de81; color: #26de81;">生活榜</span>
+                <span class="channel-tab social" data-channel="social" style="border-color: #4ecdc4; color: #4ecdc4;">社会榜</span>
+            </div>
+        </div>
+        
+        <div class="filter-group">
+            <label>关键词搜索</label>
+            <input type="text" id="keywordFilter" placeholder="输入关键词...">
+        </div>
+        
+        <button class="btn btn-secondary" onclick="resetFilters()">重置</button>
+    </div>
+    
+    <div class="stats">
+        <span>显示 <span class="highlight" id="showCount">40</span> / 40 条记录</span>
+    </div>
+    
+    <div class="content">
+        <div class="hot-list" id="hotList"></div>
+    </div>
+
+    <script>
+        const items = [{"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 1, "title": "李宇春演唱会", "url": "//s.weibo.com/weibo?q=%E6%9D%8E%E5%AE%87%E6%98%A5%E6%BC%94%E5%94%B1%E4%BC%9A&t=152", "heat": 11945, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 2, "title": "院人喜人看黄子弘凡演唱会", "url": "//s.weibo.com/weibo?q=%E9%99%A2%E4%BA%BA%E5%96%9C%E4%BA%BA%E7%9C%8B%E9%BB%84%E5%AD%90%E5%BC%98%E5%87%A1%E6%BC%94%E5%94%B1%E4%BC%9A&t=152", "heat": 12259, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 3, "title": "田栩宁 苏苏", "url": "//s.weibo.com/weibo?q=%E7%94%B0%E6%A0%A9%E5%AE%81%20%E8%8B%8F%E8%8B%8F&t=152", "heat": 39312, "tag": "热", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 4, "title": "鹿哈或需赔偿消费者26.9亿元", "url": "//s.weibo.com/weibo?q=%23%E9%B9%BF%E5%93%88%E6%88%96%E9%9C%80%E8%B5%94%E5%81%BF%E6%B6%88%E8%B4%B9%E8%80%8526.9%E4%BA%BF%E5%85%83%23&t=152", "heat": 39128, "tag": "热", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 5, "title": "周小闹回应刘文祥塌房", "url": "//s.weibo.com/weibo?q=%23%E5%91%A8%E5%B0%8F%E9%97%B9%E5%9B%9E%E5%BA%94%E5%88%98%E6%96%87%E7%A5%A5%E5%A1%8C%E6%88%BF%23&t=152", "heat": 38936, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 6, "title": "吴佳妮自曝婚内没收入很没尊严", "url": "//s.weibo.com/weibo?q=%23%E5%90%B4%E4%BD%B3%E5%A6%AE%E8%87%AA%E6%9B%9D%E5%A9%9A%E5%86%85%E6%B2%A1%E6%94%B6%E5%85%A5%E5%BE%88%E6%B2%A1%E5%B0%8A%E4%B8%A5%23&t=152", "heat": 35158, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 7, "title": "逐玉 李卿", "url": "//s.weibo.com/weibo?q=%E9%80%90%E7%8E%89%20%E6%9D%8E%E5%8D%BF&t=152", "heat": 26612, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 8, "title": "李煜东鞠躬", "url": "//s.weibo.com/weibo?q=%E6%9D%8E%E7%85%9C%E4%B8%9C%E9%9E%A0%E8%BA%AC&t=152", "heat": 21696, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 9, "title": "孔雪儿邓凯 等风热吻你", "url": "//s.weibo.com/weibo?q=%E5%AD%94%E9%9B%AA%E5%84%BF%E9%82%93%E5%87%AF%20%E7%AD%89%E9%A3%8E%E7%83%AD%E5%90%BB%E4%BD%A0&t=152", "heat": 21275, "tag": "", "date": "2026-03-15"}, {"channel_id": "entertainment", "channel_name": "文娱榜", "rank": 10, "title": "中国仙侠剧凡人修仙传火爆全球", "url": "//s.weibo.com/weibo?q=%E4%B8%AD%E5%9B%BD%E4%BB%99%E4%BE%A0%E5%89%A7%E5%87%A1%E4%BA%BA%E4%BF%AE%E4%BB%99%E4%BC%A0%E7%81%AB%E7%88%86%E5%85%A8%E7%90%83&t=152", "heat": 20658, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 1, "title": "十五五奋进之声", "url": "//s.weibo.com/weibo?q=%23%E5%8D%81%E4%BA%94%E4%BA%94%E5%A5%8B%E8%BF%9B%E4%B9%8B%E5%A3%B0%23&t=31", "heat": 0, "tag": "热", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 2, "title": "315曝光名单", "url": "//s.weibo.com/weibo?q=%23315%E6%9B%9D%E5%85%89%E5%90%8D%E5%8D%95%23&t=31", "heat": 188104, "tag": "热", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 3, "title": "有友食品声明", "url": "//s.weibo.com/weibo?q=%23%E6%9C%89%E5%8F%8B%E9%A3%9F%E5%93%81%E5%A3%B0%E6%98%8E%23&t=31", "heat": 51813, "tag": "热", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 4, "title": "网警提醒看不见的虚假更要防", "url": "//s.weibo.com/weibo?q=%23%E7%BD%91%E8%AD%A6%E6%8F%90%E9%86%92%E7%9C%8B%E4%B8%8D%E8%A7%81%E7%9A%84%E8%99%9A%E5%81%87%E6%9B%B4%E8%A6%81%E9%98%B2%23&t=31", "heat": 0, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 5, "title": "买过敏药 能用医保", "url": "//s.weibo.com/weibo?q=%23%E4%B9%B0%E8%BF%87%E6%95%8F%E8%8D%AF%20%E8%83%BD%E7%94%A8%E5%8C%BB%E4%BF%9D%23&t=31", "heat": 0, "tag": "商", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 6, "title": "椰子水 兑水加糖", "url": "//s.weibo.com/weibo?q=%E6%A4%B0%E5%AD%90%E6%B0%B4%20%E5%85%91%E6%B0%B4%E5%8A%A0%E7%B3%96&t=31", "heat": 42330, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 7, "title": "315晚会", "url": "//s.weibo.com/weibo?q=%23315%E6%99%9A%E4%BC%9A%23&t=31", "heat": 40055, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 8, "title": "伊朗发射泥石弹道导弹", "url": "//s.weibo.com/weibo?q=%23%E4%BC%8A%E6%9C%97%E5%8F%91%E5%B0%84%E6%B3%A5%E7%9F%B3%E5%BC%B9%E9%81%93%E5%AF%BC%E5%BC%B9%23&t=31", "heat": 0, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 9, "title": "民政辟谣20元中百万村民是五保户", "url": "//s.weibo.com/weibo?q=%23%E6%B0%91%E6%94%BF%E8%BE%9F%E8%B0%A320%E5%85%83%E4%B8%AD%E7%99%BE%E4%B8%87%E6%9D%91%E6%B0%91%E6%98%AF%E4%BA%94%E4%BF%9D%E6%88%B7%23&t=31", "heat": 0, "tag": "", "date": "2026-03-15"}, {"channel_id": "hot", "channel_name": "热搜总榜", "rank": 10, "title": "医美骗局", "url": "//s.weibo.com/weibo?q=%E5%8C%BB%E7%BE%8E%E9%AA%97%E5%B1%80&t=31", "heat": 39545, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 1, "title": "iPhone长焦 出片", "url": "//s.weibo.com/weibo?q=iPhone%E9%95%BF%E7%84%A6%20%E5%87%BA%E7%89%87&t=736", "heat": 7825, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 2, "title": "他们说我的苦日子不是假的", "url": "//s.weibo.com/weibo?q=%E4%BB%96%E4%BB%AC%E8%AF%B4%E6%88%91%E7%9A%84%E8%8B%A6%E6%97%A5%E5%AD%90%E4%B8%8D%E6%98%AF%E5%81%87%E7%9A%84&t=736", "heat": 7042, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 3, "title": "冻干草莓", "url": "//s.weibo.com/weibo?q=%23%E5%86%BB%E5%B9%B2%E8%8D%89%E8%8E%93%23&t=736", "heat": 6338, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 4, "title": "丢了5000块钱怎么和自己和解", "url": "//s.weibo.com/weibo?q=%E4%B8%A2%E4%BA%865000%E5%9D%97%E9%92%B1%E6%80%8E%E4%B9%88%E5%92%8C%E8%87%AA%E5%B7%B1%E5%92%8C%E8%A7%A3&t=736", "heat": 5704, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 5, "title": "小猫不让外人吃自家东西", "url": "//s.weibo.com/weibo?q=%E5%B0%8F%E7%8C%AB%E4%B8%8D%E8%AE%A9%E5%A4%96%E4%BA%BA%E5%90%83%E8%87%AA%E5%AE%B6%E4%B8%9C%E8%A5%BF&t=736", "heat": 5133, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 6, "title": "这下真的是好大专不比本科差了", "url": "//s.weibo.com/weibo?q=%E8%BF%99%E4%B8%8B%E7%9C%9F%E7%9A%84%E6%98%AF%E5%A5%BD%E5%A4%A7%E4%B8%93%E4%B8%8D%E6%AF%94%E6%9C%AC%E7%A7%91%E5%B7%AE%E4%BA%86&t=736", "heat": 4620, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 7, "title": "咖啡焖子", "url": "//s.weibo.com/weibo?q=%E5%92%96%E5%95%A1%E7%84%96%E5%AD%90&t=736", "heat": 4158, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 8, "title": "无毛猫长这样到底啥意思", "url": "//s.weibo.com/weibo?q=%E6%97%A0%E6%AF%9B%E7%8C%AB%E9%95%BF%E8%BF%99%E6%A0%B7%E5%88%B0%E5%BA%95%E5%95%A5%E6%84%8F%E6%80%9D&t=736", "heat": 3742, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 9, "title": "馍王诞生", "url": "//s.weibo.com/weibo?q=%E9%A6%8D%E7%8E%8B%E8%AF%9E%E7%94%9F&t=736", "heat": 3368, "tag": "", "date": "2026-03-15"}, {"channel_id": "life", "channel_name": "生活榜", "rank": 10, "title": "保证前额叶健康太重要了", "url": "//s.weibo.com/weibo?q=%E4%BF%9D%E8%AF%81%E5%89%8D%E9%A2%9D%E5%8F%B6%E5%81%A5%E5%BA%B7%E5%A4%AA%E9%87%8D%E8%A6%81%E4%BA%86&t=736", "heat": 3031, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 1, "title": "315曝光名单", "url": "//s.weibo.com/weibo?q=%23315%E6%9B%9D%E5%85%89%E5%90%8D%E5%8D%95%23&t=769", "heat": 189562, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 2, "title": "伊朗发射泥石弹道导弹", "url": "//s.weibo.com/weibo?q=%23%E4%BC%8A%E6%9C%97%E5%8F%91%E5%B0%84%E6%B3%A5%E7%9F%B3%E5%BC%B9%E9%81%93%E5%AF%BC%E5%BC%B9%23&t=769", "heat": 170605, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 3, "title": "有友食品声明", "url": "//s.weibo.com/weibo?q=%23%E6%9C%89%E5%8F%8B%E9%A3%9F%E5%93%81%E5%A3%B0%E6%98%8E%23&t=769", "heat": 153545, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 4, "title": "鹿哈或需赔偿消费者26.9亿元", "url": "//s.weibo.com/weibo?q=%23%E9%B9%BF%E5%93%88%E6%88%96%E9%9C%80%E8%B5%94%E5%81%BF%E6%B6%88%E8%B4%B9%E8%80%8526.9%E4%BA%BF%E5%85%83%23&t=769", "heat": 138190, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 5, "title": "椰子水 兑水加糖", "url": "//s.weibo.com/weibo?q=%E6%A4%B0%E5%AD%90%E6%B0%B4%20%E5%85%91%E6%B0%B4%E5%8A%A0%E7%B3%96&t=769", "heat": 124371, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 6, "title": "1岁半宝宝睡醒后哭喊妈妈6小时", "url": "//s.weibo.com/weibo?q=%231%E5%B2%81%E5%8D%8A%E5%AE%9D%E5%AE%9D%E7%9D%A1%E9%86%92%E5%90%8E%E5%93%AD%E5%96%8A%E5%A6%88%E5%A6%886%E5%B0%8F%E6%97%B6%23&t=769", "heat": 111934, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 7, "title": "315晚会", "url": "//s.weibo.com/weibo?q=%23315%E6%99%9A%E4%BC%9A%23&t=769", "heat": 100741, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 8, "title": "记者在内塔尼亚胡住宅废墟前报道被抓捕", "url": "//s.weibo.com/weibo?q=%E8%AE%B0%E8%80%85%E5%9C%A8%E5%86%85%E5%A1%94%E5%B0%BC%E4%BA%9A%E8%83%A1%E4%BD%8F%E5%AE%85%E5%BA%9F%E5%A2%9F%E5%89%8D%E6%8A%A5%E9%81%93%E8%A2%AB%E6%8A%93%E6%8D%95&t=769", "heat": 90666, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 9, "title": "老师标配的小蜜蜂该用还是该禁", "url": "//s.weibo.com/weibo?q=%23%E8%80%81%E5%B8%88%E6%A0%87%E9%85%8D%E7%9A%84%E5%B0%8F%E8%9C%9C%E8%9C%82%E8%AF%A5%E7%94%A8%E8%BF%98%E6%98%AF%E8%AF%A5%E7%A6%81%23&t=769", "heat": 81600, "tag": "", "date": "2026-03-15"}, {"channel_id": "social", "channel_name": "社会榜", "rank": 10, "title": "民警抓捕逃犯时牺牲2嫌犯畏罪自杀", "url": "//s.weibo.com/weibo?q=%23%E6%B0%91%E8%AD%A6%E6%8A%93%E6%8D%95%E9%80%83%E7%8A%AF%E6%97%B6%E7%89%BA%E7%89%B22%E5%AB%8C%E7%8A%AF%E7%95%8F%E7%BD%AA%E8%87%AA%E6%9D%80%23&t=769", "heat": 73440, "tag": "", "date": "2026-03-15"}];
+        const channelColors = {"hot": "#ff6b6b", "social": "#4ecdc4", "entertainment": "#a55eea", "life": "#26de81"};
+        let selectedChannel = '';
+        
+        function getRankClass(rank) {
+            if (rank === 1) return 'top1';
+            if (rank === 2) return 'top2';
+            if (rank === 3) return 'top3';
+            return 'normal';
+        }
+        
+        function formatHeat(heat) {
+            if (heat >= 10000) return (heat / 10000).toFixed(1) + '万';
+            return heat.toLocaleString();
+        }
+        
+        function fixUrl(url) {
+            // 修复协议相对URL (//example.com -> https://example.com)
+            if (url && url.startsWith('//')) {
+                return 'https:' + url;
+            }
+            return url;
+        }
+        
+        function renderItems() {
+            const dateSelect = document.getElementById('dateSelect').value;
+            const keyword = document.getElementById('keywordFilter').value.toLowerCase().trim();
+            
+            let filtered = items.filter(item => {
+                if (dateSelect && item.date !== dateSelect) return false;
+                if (selectedChannel && item.channel_id !== selectedChannel) return false;
+                if (keyword && !item.title.toLowerCase().includes(keyword)) return false;
+                return true;
+            });
+            
+            document.getElementById('showCount').textContent = filtered.length;
+            
+            const container = document.getElementById('hotList');
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="empty">
+                        <div class="empty-icon">🔍</div>
+                        <div>没有找到匹配的记录</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 按日期和频道分组
+            const grouped = {};
+            filtered.forEach(item => {
+                const key = item.date + '_' + item.channel_id;
+                if (!grouped[key]) grouped[key] = { date: item.date, channel: item.channel_name, channel_id: item.channel_id, items: [] };
+                grouped[key].items.push(item);
+            });
+            
+            let html = '';
+            Object.values(grouped).sort((a, b) => b.date.localeCompare(a.date) || a.channel_id.localeCompare(b.channel_id))
+                .forEach(group => {
+                    const bgColor = channelColors[group.channel_id] || '#666';
+                    html += group.items.map(item => `
+                        <a href="${fixUrl(item.url)}" class="hot-item" target="_blank">
+                            <div class="rank ${getRankClass(item.rank)}">${item.rank}</div>
+                            <div class="item-content">
+                                <div class="item-title">${item.title}</div>
+                                <div class="item-meta">
+                                    <span class="channel-badge" style="background: ${bgColor}">${group.channel}</span>
+                                    ${item.heat ? `<span class="heat-badge">🔥 ${formatHeat(item.heat)}</span>` : ''}
+                                    ${item.tag ? `<span class="tag-badge">${item.tag}</span>` : ''}
+                                    <span style="color: #999;">${item.date}</span>
+                                </div>
+                            </div>
+                        </a>
+                    `).join('');
+                });
+            
+            container.innerHTML = html;
+        }
+        
+        // 频道标签点击
+        document.getElementById('channelTabs').addEventListener('click', function(e) {
+            if (e.target.classList.contains('channel-tab')) {
+                document.querySelectorAll('.channel-tab').forEach(tab => tab.classList.remove('active'));
+                e.target.classList.add('active');
+                selectedChannel = e.target.dataset.channel;
+                renderItems();
+            }
+        });
+        
+        function resetFilters() {
+            document.getElementById('dateSelect').value = '';
+            document.getElementById('keywordFilter').value = '';
+            document.querySelectorAll('.channel-tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelector('.channel-tab.all').classList.add('active');
+            selectedChannel = '';
+            renderItems();
+        }
+        
+        document.getElementById('dateSelect').addEventListener('change', renderItems);
+        document.getElementById('keywordFilter').addEventListener('input', renderItems);
+        
+        renderItems();
+    </script>
+</body>
+</html>

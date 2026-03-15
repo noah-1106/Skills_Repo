@@ -1,0 +1,924 @@
+{
+  "_description": "RSS源配置文件",
+  "_updated": "2026-03-16",
+  "_total_sources": 131,
+  "sources": [
+    {
+      "id": "simonwillison-rss",
+      "name": "Simon Willison",
+      "url": "https://simonwillison.net/atom/everything/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "garymarcus-rss",
+      "name": "Gary Marcus",
+      "url": "https://garymarcus.substack.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "huggingface-rss",
+      "name": "Hugging Face Blog",
+      "url": "https://huggingface.co/blog/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "openai-rss",
+      "name": "OpenAI Blog",
+      "url": "https://openai.com/blog/rss.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "sebas-rss",
+      "name": "Sebastian Raschka",
+      "url": "https://magazine.sebastianraschka.com/feed",
+      "category": "tech",
+      "enabled": false
+    },
+    {
+      "id": "lilian-rss",
+      "name": "Lil'Log (Lilian Weng)",
+      "url": "https://lilianweng.github.io/index.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "gwern-rss",
+      "name": "Gwern",
+      "url": "https://gwern.substack.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "dwarkesh-rss",
+      "name": "Dwarkesh Patel",
+      "url": "https://dwarkesh.substack.com/feed",
+      "category": "tech",
+      "enabled": false
+    },
+    {
+      "id": "minimaxir-rss",
+      "name": "minimaxir (Max Woolf)",
+      "url": "https://minimaxir.com/index.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "googleai-rss",
+      "name": "Google AI Blog",
+      "url": "https://blog.google/technology/ai/rss/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "vitalik-rss",
+      "name": "Vitalik Buterin",
+      "url": "https://vitalik.eth.limo/feed.xml",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "coindesk-rss",
+      "name": "CoinDesk",
+      "url": "https://feeds.feedburner.com/CoinDesk",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "theblock-rss",
+      "name": "The Block",
+      "url": "https://www.theblock.co/feeds/news",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "decrypt-rss",
+      "name": "Decrypt",
+      "url": "https://decrypt.co/feed",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "cointelegraph-rss",
+      "name": "Cointelegraph",
+      "url": "https://cointelegraph.com/rss",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "hn-rss",
+      "name": "Hacker News Frontpage",
+      "url": "https://hnrss.org/frontpage",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "ars-rss",
+      "name": "Ars Technica",
+      "url": "https://feeds.arstechnica.com/arstechnica/index",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "techcrunch-rss",
+      "name": "TechCrunch",
+      "url": "https://techcrunch.com/feed/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "verge-rss",
+      "name": "The Verge",
+      "url": "https://www.theverge.com/rss/index.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "krebs-rss",
+      "name": "Krebs on Security",
+      "url": "https://krebsonsecurity.com/feed/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "daringfireball-rss",
+      "name": "Daring Fireball",
+      "url": "https://daringfireball.net/feeds/main",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "troyhunt-rss",
+      "name": "Troy Hunt",
+      "url": "https://www.troyhunt.com/rss/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "antirez-rss",
+      "name": "antirez",
+      "url": "http://antirez.com/rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "mitchellh-rss",
+      "name": "Mitchell Hashimoto",
+      "url": "https://mitchellh.com/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "geohot-rss",
+      "name": "Geohot",
+      "url": "https://geohot.github.io/blog/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "ml-reddit-rss",
+      "name": "r/MachineLearning",
+      "url": "https://www.reddit.com/r/MachineLearning/.rss",
+      "category": "tech",
+      "enabled": false
+    },
+    {
+      "id": "36kr-rss",
+      "name": "36氪",
+      "url": "https://36kr.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "synced-rss",
+      "name": "机器之心 Synced",
+      "url": "https://www.jiqizhixin.com/rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "qbitai-rss",
+      "name": "量子位 QbitAI",
+      "url": "https://www.qbitai.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "infoq-rss",
+      "name": "InfoQ 中文",
+      "url": "https://www.infoq.cn/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "mit-tech-review-rss",
+      "name": "MIT Technology Review",
+      "url": "https://www.technologyreview.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "venturebeat-ai-rss",
+      "name": "VentureBeat AI",
+      "url": "https://venturebeat.com/category/ai/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "404media-rss",
+      "name": "404 Media",
+      "url": "https://www.404media.co/rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "aisnakeoil-rss",
+      "name": "AI Snake Oil",
+      "url": "https://aisnakeoil.substack.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "bytebytego-rss",
+      "name": "ByteByteGo",
+      "url": "https://blog.bytebytego.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "nvidia-ai-rss",
+      "name": "NVIDIA AI Blog",
+      "url": "https://blogs.nvidia.com/feed/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "deepmind-rss",
+      "name": "Google DeepMind Blog",
+      "url": "https://deepmind.google/blog/rss.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "producthunt-rss",
+      "name": "Product Hunt",
+      "url": "https://www.producthunt.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "messari-rss",
+      "name": "Messari",
+      "url": "https://messari.io/rss",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "defiant-rss",
+      "name": "The Defiant",
+      "url": "https://thedefiant.io/feed",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "ifanr-rss",
+      "name": "爱范儿",
+      "url": "https://www.ifanr.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "sspai-rss",
+      "name": "少数派",
+      "url": "https://sspai.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "wired-rss",
+      "name": "Wired",
+      "url": "https://www.wired.com/feed/rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "ieee-spectrum-rss",
+      "name": "IEEE Spectrum",
+      "url": "https://spectrum.ieee.org/feeds/feed.rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "bensbites-rss",
+      "name": "Ben's Bites",
+      "url": "https://www.bensbites.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "the-decoder-rss",
+      "name": "The Decoder",
+      "url": "https://the-decoder.com/feed/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "a16zcrypto-rss",
+      "name": "a16z Crypto",
+      "url": "https://a16zcrypto.substack.com/feed",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "bankless-rss",
+      "name": "Bankless",
+      "url": "https://newsletter.banklesshq.com/feed",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "overreacted-rss",
+      "name": "Overreacted (Dan Abramov)",
+      "url": "https://overreacted.io/rss.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "eli-bendersky-rss",
+      "name": "Eli Bendersky",
+      "url": "https://eli.thegreenplace.net/feeds/all.atom.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "matklad-rss",
+      "name": "matklad (Alex Kladov)",
+      "url": "https://matklad.github.io/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "lucumr-rss",
+      "name": "Armin Ronacher",
+      "url": "https://lucumr.pocoo.org/feed.atom",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "oldnewthing-rss",
+      "name": "The Old New Thing (Raymond Chen)",
+      "url": "https://devblogs.microsoft.com/oldnewthing/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "rachelbythebay-rss",
+      "name": "Rachel by the Bay",
+      "url": "https://rachelbythebay.com/w/atom.xml",
+      "category": "tech",
+      "enabled": false
+    },
+    {
+      "id": "xeiaso-rss",
+      "name": "Xe Iaso",
+      "url": "https://xeiaso.net/blog.rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "pluralistic-rss",
+      "name": "Pluralistic (Cory Doctorow)",
+      "url": "https://pluralistic.net/feed/",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "lcamtuf-rss",
+      "name": "lcamtuf (Michal Zalewski)",
+      "url": "https://lcamtuf.substack.com/feed",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "hillelwayne-rss",
+      "name": "Hillel Wayne",
+      "url": "https://buttondown.com/hillelwayne/rss",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "dynomight-rss",
+      "name": "Dynomight",
+      "url": "https://dynomight.net/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "geoffreylitt-rss",
+      "name": "Geoffrey Litt",
+      "url": "https://www.geoffreylitt.com/feed.xml",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "fabiensanglard-rss",
+      "name": "Fabien Sanglard",
+      "url": "https://fabiensanglard.net/rss.xml",
+      "category": "tech",
+      "enabled": false
+    },
+    {
+      "id": "chinanews-rss",
+      "name": "中国新闻网",
+      "url": "https://www.chinanews.com.cn/rss/scroll-news.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "huxiu-rss",
+      "name": "虎嗅",
+      "url": "https://rss.huxiu.com",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-ywkx-rss",
+      "name": "人民网要闻快讯",
+      "url": "http://www.people.com.cn/rss/ywkx.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-society-rss",
+      "name": "人民网社会频道",
+      "url": "http://www.people.com.cn/rss/society.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-military-rss",
+      "name": "人民网军事频道",
+      "url": "http://www.people.com.cn/rss/military.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "cgtn-china-rss",
+      "name": "CGTN中国频道",
+      "url": "https://www.cgtn.com/subscribe/rss/section/china.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "yystv-rss",
+      "name": "游研社",
+      "url": "https://www.yystv.cn/rss/feed",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "appinn-rss",
+      "name": "小众软件",
+      "url": "https://www.appinn.com/feed/",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "bloomberg-rss",
+      "name": "Bloomberg",
+      "url": "https://feeds.bloomberg.com/news.rss",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "reuters-rss",
+      "name": "Reuters",
+      "url": "https://www.reuters.com/tools/rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "wsj-rss",
+      "name": "Wall Street Journal",
+      "url": "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "caixin-rss",
+      "name": "财新网",
+      "url": "https://china.caixin.com/rss.xml",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "caijing-rss",
+      "name": "财经杂志",
+      "url": "http://rss.caijing.com.cn",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "21cbh-rss",
+      "name": "21世纪经济报道",
+      "url": "https://www.21jingji.com/rss.xml",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "cnbc-rss",
+      "name": "CNBC",
+      "url": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "ft-rss",
+      "name": "Financial Times",
+      "url": "https://www.ft.com/rss/home",
+      "category": "finance",
+      "enabled": true
+    },
+    {
+      "id": "economist-rss",
+      "name": "The Economist",
+      "url": "https://www.economist.com/rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "investopedia-rss",
+      "name": "Investopedia",
+      "url": "https://www.investopedia.com/rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "xueqiu-rss",
+      "name": "雪球",
+      "url": "https://xueqiu.com/rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "eastmoney-rss",
+      "name": "东方财富",
+      "url": "https://rss.eastmoney.com",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "nejm-rss",
+      "name": "New England Journal of Medicine",
+      "url": "https://www.nejm.org/rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "thelancet-rss",
+      "name": "The Lancet",
+      "url": "https://www.thelancet.com/rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "bmj-rss",
+      "name": "British Medical Journal",
+      "url": "https://www.bmj.com/rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "nature-medicine",
+      "name": "Nature Medicine",
+      "url": "https://www.nature.com/nm.rss",
+      "category": "health",
+      "enabled": true
+    },
+    {
+      "id": "statnews-rss",
+      "name": "STAT News",
+      "url": "https://www.statnews.com/feed",
+      "category": "health",
+      "enabled": true
+    },
+    {
+      "id": "medpage-rss",
+      "name": "MedPage Today",
+      "url": "https://www.medpagetoday.com/rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "dxy-rss",
+      "name": "丁香园",
+      "url": "https://www.dxy.cn/rss",
+      "category": "health",
+      "enabled": true
+    },
+    {
+      "id": "healthnews-rss",
+      "name": "健康界",
+      "url": "https://www.cn-healthcare.com/rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "ign-rss",
+      "name": "IGN",
+      "url": "https://www.ign.com/rss.xml",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "gamespot-rss",
+      "name": "GameSpot",
+      "url": "https://www.gamespot.com/rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "polygon-rss",
+      "name": "Polygon",
+      "url": "https://www.polygon.com/rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "kotaku-rss",
+      "name": "Kotaku",
+      "url": "https://kotaku.com/rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "eurogamer-rss",
+      "name": "Eurogamer",
+      "url": "https://www.eurogamer.net/rss",
+      "category": "gaming",
+      "enabled": true
+    },
+    {
+      "id": "gameres-rss",
+      "name": "游戏葡萄",
+      "url": "https://youxiputao.com/rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "gamersky-rss",
+      "name": "游民星空",
+      "url": "https://www.gamersky.com/rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "retaildive-rss",
+      "name": "Retail Dive",
+      "url": "https://www.retaildive.com/rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "ecommercebytes-rss",
+      "name": "EcommerceBytes",
+      "url": "https://www.ecommercebytes.com/rss",
+      "category": "ecommerce",
+      "enabled": true
+    },
+    {
+      "id": "digitalcommerce-rss",
+      "name": "Digital Commerce 360",
+      "url": "https://www.digitalcommerce360.com/rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "36kr-ecommerce",
+      "name": "36氪电商",
+      "url": "https://36kr.com/rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "tmall-rss",
+      "name": "天猫",
+      "url": "https://www.tmall.com/rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "jd-rss",
+      "name": "京东",
+      "url": "https://www.jd.com/rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "chronicle-rss",
+      "name": "Chronicle of Higher Education",
+      "url": "https://www.chronicle.com/rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "insidehighered-rss",
+      "name": "Inside Higher Ed",
+      "url": "https://www.insidehighered.com/rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "edweek-rss",
+      "name": "Education Week",
+      "url": "https://www.edweek.org/rss",
+      "category": "education",
+      "enabled": true
+    },
+    {
+      "id": "edtech-rss",
+      "name": "EdTech Magazine",
+      "url": "https://edtechmagazine.com/rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "arxiv-rss",
+      "name": "arXiv",
+      "url": "http://export.arxiv.org/rss/cs",
+      "category": "tech",
+      "enabled": true
+    },
+    {
+      "id": "nature-rss",
+      "name": "Nature",
+      "url": "https://www.nature.com/nature.rss",
+      "category": "education",
+      "enabled": true
+    },
+    {
+      "id": "science-rss",
+      "name": "Science Magazine",
+      "url": "https://www.science.org/rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "jyb-rss",
+      "name": "中国教育报",
+      "url": "http://www.jyb.cn/rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "people-world-rss",
+      "name": "人民网国际频道",
+      "url": "http://www.people.com.cn/rss/world.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-finance-rss",
+      "name": "人民网财经频道",
+      "url": "http://www.people.com.cn/rss/finance.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-it-rss",
+      "name": "人民网科技频道",
+      "url": "http://www.people.com.cn/rss/it.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-sports-rss",
+      "name": "人民网体育频道",
+      "url": "http://www.people.com.cn/rss/sports.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "people-edu-rss",
+      "name": "人民网教育频道",
+      "url": "http://www.people.com.cn/rss/edu.xml",
+      "category": "local",
+      "enabled": true
+    },
+    {
+      "id": "reddit-stocks",
+      "name": "Reddit r/stocks",
+      "url": "https://www.reddit.com/r/stocks/.rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "reddit-wsb",
+      "name": "Reddit r/wallstreetbets",
+      "url": "https://www.reddit.com/r/wallstreetbets/.rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "reddit-crypto",
+      "name": "Reddit r/CryptoCurrency",
+      "url": "https://www.reddit.com/r/CryptoCurrency/.rss",
+      "category": "finance",
+      "enabled": false
+    },
+    {
+      "id": "reddit-medicine",
+      "name": "Reddit r/medicine",
+      "url": "https://www.reddit.com/r/medicine/.rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "reddit-science",
+      "name": "Reddit r/science",
+      "url": "https://www.reddit.com/r/science/.rss",
+      "category": "health",
+      "enabled": false
+    },
+    {
+      "id": "reddit-gaming",
+      "name": "Reddit r/gaming",
+      "url": "https://www.reddit.com/r/gaming/.rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "reddit-games",
+      "name": "Reddit r/games",
+      "url": "https://www.reddit.com/r/games/.rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "reddit-indiegaming",
+      "name": "Reddit r/IndieGaming",
+      "url": "https://www.reddit.com/r/IndieGaming/.rss",
+      "category": "gaming",
+      "enabled": false
+    },
+    {
+      "id": "reddit-ecommerce",
+      "name": "Reddit r/ecommerce",
+      "url": "https://www.reddit.com/r/ecommerce/.rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "reddit-shopify",
+      "name": "Reddit r/shopify",
+      "url": "https://www.reddit.com/r/shopify/.rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "reddit-amazonfba",
+      "name": "Reddit r/AmazonFBA",
+      "url": "https://www.reddit.com/r/AmazonFBA/.rss",
+      "category": "ecommerce",
+      "enabled": false
+    },
+    {
+      "id": "reddit-education",
+      "name": "Reddit r/education",
+      "url": "https://www.reddit.com/r/education/.rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "reddit-professors",
+      "name": "Reddit r/Professors",
+      "url": "https://www.reddit.com/r/Professors/.rss",
+      "category": "education",
+      "enabled": false
+    },
+    {
+      "id": "reddit-china",
+      "name": "Reddit r/China",
+      "url": "https://www.reddit.com/r/China/.rss",
+      "category": "local",
+      "enabled": false
+    },
+    {
+      "id": "reddit-shanghai",
+      "name": "Reddit r/shanghai",
+      "url": "https://www.reddit.com/r/shanghai/.rss",
+      "category": "local",
+      "enabled": false
+    },
+    {
+      "id": "reddit-beijing",
+      "name": "Reddit r/beijing",
+      "url": "https://www.reddit.com/r/beijing/.rss",
+      "category": "local",
+      "enabled": false
+    }
+  ]
+}

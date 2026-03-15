@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>今日头条热榜 - 数据可视化</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+            background: #f5f5f5;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #ed4040 0%, #c62828 100%);
+            color: white;
+            padding: 25px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header h1 { font-size: 24px; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+        .header h1::before { content: "📰"; }
+        .header .meta { font-size: 13px; opacity: 0.9; }
+        
+        .filters {
+            background: white;
+            padding: 20px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        
+        .filter-group { display: flex; flex-direction: column; gap: 6px; }
+        .filter-group label { font-size: 12px; color: #666; font-weight: 500; }
+        .filter-group select, .filter-group input {
+            padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 14px; background: white; min-width: 120px;
+        }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 14px; background: #f0f0f0; color: #666; }
+        .btn:hover { background: #e0e0e0; }
+        
+        .stats {
+            background: #fff0f0;
+            padding: 12px 20px;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            justify-content: space-between;
+        }
+        .stats .highlight { color: #ed4040; font-weight: 600; }
+        
+        .content { max-width: 900px; margin: 0 auto; padding: 20px; }
+        
+        .hot-list { display: flex; flex-direction: column; gap: 12px; }
+        
+        .hot-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 16px 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        
+        .hot-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .rank {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            margin-right: 16px;
+            flex-shrink: 0;
+        }
+        
+        .rank.top1 { background: linear-gradient(135deg, #ff6b6b, #ee5a5a); color: white; }
+        .rank.top2 { background: linear-gradient(135deg, #ffa94d, #ff8c42); color: white; }
+        .rank.top3 { background: linear-gradient(135deg, #ffd43b, #fcc419); color: #333; }
+        .rank.normal { background: #f0f0f0; color: #666; }
+        
+        .item-content { flex: 1; min-width: 0; }
+        
+        .item-title {
+            font-size: 15px;
+            color: #1a1a1a;
+            margin-bottom: 8px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        
+        .item-meta { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+        
+        .label-badge {
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #ed4040;
+            color: white;
+        }
+        
+        .heat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #ed4040;
+            font-weight: 500;
+        }
+        
+        .empty { text-align: center; padding: 80px 20px; color: #999; }
+        .empty-icon { font-size: 48px; margin-bottom: 16px; }
+        
+        @media (max-width: 640px) {
+            .content { padding: 12px; }
+            .hot-item { padding: 12px 15px; }
+            .rank { width: 32px; height: 32px; font-size: 14px; margin-right: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>今日头条热榜数据可视化</h1>
+        <div class="meta">
+            更新时间: 2026-03-16 05:19 | 
+            共 10 条记录
+        </div>
+    </div>
+    
+    <div class="filters">
+        <div class="filter-group">
+            <label>日期</label>
+            <select id="dateSelect">
+                <option value="">全部</option>
+                <option value="2026-03-15">2026-03-15</option>
+            </select>
+        </div>
+        
+        <div class="filter-group">
+            <label>搜索</label>
+            <input type="text" id="searchInput" placeholder="输入关键词...">
+        </div>
+        
+        <button class="btn" onclick="resetFilters()">重置</button>
+    </div>
+    
+    <div class="stats">
+        <span>显示 <span class="highlight" id="showCount">10</span> / 10 条</span>
+    </div>
+    
+    <div class="content">
+        <div class="hot-list" id="hotList"></div>
+    </div>
+
+    <script>
+        const items = [{"rank": 1, "title": "市监总局彻查315晚会曝光违法行为", "popularity": 30164001, "link": "https://www.toutiao.com/trending/7617486592181014062/", "label": "热门事件", "cover": "https://p3-sign.toutiaoimg.com/top-static-files-outer/breaknews/399c4877-eb34-4e40-8eec-a62713cfb0cf~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=%2BRn9CRZxXJE9RqR7lXvX%2FEd0XT0%3D", "date": "2026-03-15"}, {"rank": 2, "title": "央视“3·15”晚会点名金山制药", "popularity": 27293517, "link": "https://www.toutiao.com/trending/7617469624271618054/", "label": "热门事件", "cover": "https://p3-sign.toutiaoimg.com/mosaic-legacy/2b29000036f8405561443~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=ujmCqTyJ7JVWvsy1fN7Bn6a8T7M%3D", "date": "2026-03-15"}, {"rank": 3, "title": "中国盾构机全球市场占有率第一", "popularity": 24696195, "link": "https://www.toutiao.com/article/7617386839708418595", "label": "", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/63299744c7c34427b603a630dc949025~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=N86Wqsx1osaWeR1EeheuDqBRF8E%3D", "date": "2026-03-15"}, {"rank": 4, "title": "老师生娃 班里四个男生惊喜探望", "popularity": 22346041, "link": "https://www.toutiao.com/trending/7616113381275435050/", "label": "", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/72182d122d3b4895b49892b243dea01e~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=m4NZ49%2BX9K0NhGOYJXkYg9Qs7tk%3D", "date": "2026-03-15"}, {"rank": 5, "title": "美宜佳被查获非法卷烟139.99万支", "popularity": 20219534, "link": "https://www.toutiao.com/trending/7617370414004813860/", "label": "新进展", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/e7da58296deb417da4fbe753fc782178~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=1MWTBq2hIhsXw7UXJaz74LevX6o%3D", "date": "2026-03-15"}, {"rank": 6, "title": "网警提醒看不见的虚假更要防", "popularity": 18295391, "link": "https://www.toutiao.com/trending/7617333756785410058/", "label": "", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/c331e1d58420440eb7856505df2b54bb~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=BzqxPfgPKMEMnxURDILoC6hbt3c%3D", "date": "2026-03-15"}, {"rank": 7, "title": "伊朗导弹碎片击中美驻以色列领事官邸", "popularity": 16554354, "link": "https://www.toutiao.com/trending/7617447865123786286/", "label": "", "cover": "https://p3-sign.toutiaoimg.com/top-static-files-outer/breaknews/2c808ed8-9902-4fd3-b0f0-ba32bdb26d0f~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=awPTBO68tXvFVzv69Q3jo%2BkBaIY%3D", "date": "2026-03-15"}, {"rank": 8, "title": "315曝光漂白鸡爪 生产车间令人作呕", "popularity": 14978999, "link": "https://www.toutiao.com/trending/7617383931079491590/", "label": "热门事件", "cover": "https://p3-sign.toutiaoimg.com/top-static-files-outer/breaknews/f7f193df-6377-4950-a828-e22ea5ca5f53~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=svSpACl%2BnOgQ2aGGO9dXWKK42%2Fw%3D", "date": "2026-03-15"}, {"rank": 9, "title": "胖东来眼镜自选超市人山人海", "popularity": 13553559, "link": "https://www.toutiao.com/trending/7616305988971298822/", "label": "", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/e6d84e9e18314d26a9c4cf7c5386214c~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=ZiLzQRFq3xwsrgTOFagzvAlaEDI%3D", "date": "2026-03-15"}, {"rank": 10, "title": "卧底199元桂林6日游3天被排7次购物", "popularity": 12263767, "link": "https://www.toutiao.com/trending/7616999503977627689/", "label": "", "cover": "https://p3-sign.toutiaoimg.com/tos-cn-i-qvj2lq49k0/a52a9e3647bf44b0872a0d4037b5889f~tplv-tt-shrink:960:540.jpeg?_iz=30575&from=sign_default&lk3s=8d617dac&x-expires=1776124800&x-signature=NgbSaELSoq0HshlEsSARHvMXch8%3D", "date": "2026-03-15"}];
+        
+        function formatHeat(num) {
+            if (num >= 10000) return (num / 10000).toFixed(1) + '万';
+            return num.toLocaleString();
+        }
+        
+        function getRankClass(rank) {
+            if (rank === 1) return 'top1';
+            if (rank === 2) return 'top2';
+            if (rank === 3) return 'top3';
+            return 'normal';
+        }
+        
+        function renderItems() {
+            const dateSelect = document.getElementById('dateSelect').value;
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
+            
+            let filtered = items.filter(item => {
+                if (dateSelect && item.date !== dateSelect) return false;
+                if (search && !item.title.toLowerCase().includes(search)) return false;
+                return true;
+            });
+            
+            document.getElementById('showCount').textContent = filtered.length;
+            
+            const container = document.getElementById('hotList');
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="empty" style="grid-column: 1/-1;">
+                        <div class="empty-icon">📰</div>
+                        <div>没有找到记录</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 按日期分组
+            const grouped = {};
+            filtered.forEach(item => {
+                if (!grouped[item.date]) grouped[item.date] = [];
+                grouped[item.date].push(item);
+            });
+            
+            let html = '';
+            Object.keys(grouped).sort().reverse().forEach(date => {
+                html += grouped[date].map(item => `
+                    <a href="${item.link}" class="hot-item" target="_blank">
+                        <div class="rank ${getRankClass(item.rank)}">${item.rank}</div>
+                        <div class="item-content">
+                            <div class="item-title">${item.title}</div>
+                            <div class="item-meta">
+                                ${item.label ? `<span class="label-badge">${item.label}</span>` : ''}
+                                ${item.popularity ? `<span class="heat-badge">🔥 ${formatHeat(item.popularity)}</span>` : ''}
+                                <span style="color: #999;">${item.date}</span>
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        function resetFilters() {
+            document.getElementById('dateSelect').value = '';
+            document.getElementById('searchInput').value = '';
+            renderItems();
+        }
+        
+        document.getElementById('dateSelect').addEventListener('change', renderItems);
+        document.getElementById('searchInput').addEventListener('input', renderItems);
+        
+        renderItems();
+    </script>
+</body>
+</html>
