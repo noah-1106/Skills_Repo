@@ -23,3 +23,15 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **技能描述 / Description**：知乎数据抓取工具，支持三级认证降级机制（Browser Profile → File Cookie → Fallback），确保数据可靠获取 / Zhihu data fetching tool with three-level authentication fallback mechanism
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-15
+
+### coze-workflow
+- **技能名称 / Name**：Coze 工作流执行 / Coze Workflow
+- **技能描述 / Description**：Coze 工作流执行技能，纯净的调用层，不处理业务逻辑 / Coze workflow executor, pure invocation layer with no business logic
+- **当前版本 / Version**：1.1.3
+- **发布日期 / Date**：2026-03-15
+
+### image-gen-coze
+- **技能名称 / Name**：图像生成 / Image Generation
+- **技能描述 / Description**：基于 Coze 的图像生成技能，使用 Seedream 4.5 模型，负责参数构建和结果解析 / Image generation via Coze using Seedream 4.5 model
+- **当前版本 / Version**：1.1.3
+- **发布日期 / Date**：2026-03-15

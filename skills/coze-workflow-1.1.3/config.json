@@ -1,0 +1,4 @@
+{
+  "api_key": "你的扣子api key",
+  "base_url": "https://api.coze.cn/v1/workflow/stream_run"
+}
