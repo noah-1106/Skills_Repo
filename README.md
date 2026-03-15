@@ -85,19 +85,13 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 ```
 Skills_Repo/
 ├── skills/                 # 技能目录 / Skills directory
-│   ├── longtask_system/    # 长程任务系统
-│   ├── ec_creator/         # 执行卡片创建工具
-│   ├── rss_fetcher/        # RSS采集器
-│   ├── zhihu-fetcher/      # 知乎数据获取
-│   ├── baidu-hot-cn-1/     # 百度热榜监控
-│   ├── weibo-fresh-posts-0/# 微博热搜采集
-│   ├── toutiao-news-trends-0/  # 今日头条热榜
-│   ├── douyin-hot-trend-1/     # 抖音热榜
-│   ├── coze-workflow/      # Coze工作流
-│   └── image-gen-coze/     # 图像生成
+│   └── [skill_name]/       # 各技能文件夹 / Individual skill folders
 ├── docs/                   # 文档 / Documentation
 └── README.md               # 本文件
 ```
+
+👉 所有技能请查看 [`skills/`](skills/) 目录
+👉 View all skills in the [`skills/`](skills/) directory
 
 ---
 
