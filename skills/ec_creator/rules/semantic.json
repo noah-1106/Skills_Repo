@@ -1,0 +1,41 @@
+{
+  "version": "1.1.0",
+  "description": "Semantic validation rules for EC files with auto-fix suggestions",
+  "patterns": [
+    {
+      "name": "network_operations",
+      "keywords": [
+        "upload", "post", "send", "api", "http", "request", "fetch", "download"
+      ],
+      "required_dependencies": [
+        "network", "curl", "wget", "api", "http"
+      ],
+      "warning_message": "Network operations detected but no network skill declared in dependencies",
+      "fix_snippet": "### Dependency 1\n- **Dependency Type**: Skill\n- **Resource Name**: moltbook (or your network skill)\n- **Resource Path**: ~/.openclaw/skills/moltbook/\n- **Usage Convention**: Use for API calls and HTTP requests"
+    },
+    {
+      "name": "error_handling",
+      "keywords": [
+        "error", "fail", "retry", "exception", "catch", "if.*fail", "on error", "handle error"
+      ],
+      "minimum_count": 1,
+      "warning_message": "No explicit error handling found - add retry logic or failure recovery",
+      "fix_snippet": "## Execution Conventions\n\n### Error Handling\n- **Retry Policy**: 3 attempts with 60s delay\n- **On Failure**: Log error, notify user, PAUSE execution\n- **Recovery**: Manual review required before retry"
+    },
+    {
+      "name": "input_validation",
+      "keywords": [
+        "check", "validate", "verify", "if.*exist", "ensure", "confirm"
+      ],
+      "minimum_count": 1,
+      "suggestion": "Add input validation steps to prevent downstream errors",
+      "fix_snippet": "### Step 1: Validate Input\n- **Action**: Check if input file exists and is readable\n- **Validation**: `test -f input.txt && test -r input.txt`\n- **On Fail**: Report missing input and STOP"
+    }
+  ],
+  "quality_gates": {
+    "minimum_steps": 3,
+    "maximum_steps": 15,
+    "requires_io_definition": true,
+    "requires_error_handling": true
+  }
+}

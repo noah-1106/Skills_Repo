@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "description": "Structure validation rules for EC files",
+  "required_sections": [
+    {
+      "name": "Resource Dependencies",
+      "level": "H2",
+      "required": true,
+      "error_message": "Missing Resource Dependencies - Agent may hallucinate unavailable tools"
+    },
+    {
+      "name": "Execution Workflow",
+      "level": "H2",
+      "required": true,
+      "error_message": "Missing Execution Workflow - No sequential execution defined"
+    },
+    {
+      "name": "Execution Conventions",
+      "level": "H2",
+      "required": true,
+      "error_message": "Missing Execution Conventions - I/O paths not defined"
+    }
+  ],
+  "optional_sections": [
+    {
+      "name": "Applicable Scenarios",
+      "level": "H2",
+      "description": "When to use this EC"
+    },
+    {
+      "name": "Changelog",
+      "level": "H2",
+      "description": "Version history"
+    }
+  ],
+  "step_format": {
+    "required": true,
+    "pattern": "^\\d+\\\\.",
+    "description": "Steps must be numbered (1., 2., 3.)"
+  }
+}

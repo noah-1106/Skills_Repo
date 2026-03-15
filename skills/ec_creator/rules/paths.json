@@ -1,0 +1,51 @@
+{
+  "version": "1.0.0",
+  "description": "Path validation rules for EC files",
+  "rules": [
+    {
+      "name": "relative_paths",
+      "description": "Paths should be relative, not absolute",
+      "pattern": "^(\\./|\\.\\./|[a-zA-Z])",
+      "forbidden": "^/|^~",
+      "error_message": "Use relative paths, not absolute paths"
+    },
+    {
+      "name": "workspace_bound",
+      "description": "Paths should be within workspace",
+      "allowed_prefixes": [
+        "./",
+        "workspace/",
+        "ExCard/",
+        "skills/",
+        "memory/",
+        "templates/"
+      ],
+      "warning_message": "Path may be outside workspace"
+    },
+    {
+      "name": "template_substitution",
+      "description": "Template paths need substitution",
+      "patterns": [
+        "YYYY-MM-DD",
+        "XXX",
+        "{variable}"
+      ],
+      "type": "template",
+      "message": "Template path - ensure substitution at runtime"
+    }
+  ],
+  "check_types": {
+    "input": {
+      "must_exist": true,
+      "readable": true
+    },
+    "output": {
+      "parent_must_exist": true,
+      "writable": true
+    },
+    "template": {
+      "must_exist": false,
+      "validate_substitution": true
+    }
+  }
+}
