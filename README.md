@@ -27,39 +27,42 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 
 ### 数据采集 / Data Collection
 
+📊 **所有数据采集技能均包含可视化 HTML 报告功能**
+📊 **All data collection skills include visual HTML reports**
+
 #### rss_fetcher
 - **技能名称 / Name**：RSS采集器 / RSS Fetcher
-- **技能描述 / Description**：统一的RSS采集与管理系统，支持增量抓取、自动去重、自动标签、HTML报告生成 / Unified RSS feed fetcher with incremental fetching, auto-dedup, auto-tagging, and HTML reports
+- **技能描述 / Description**：统一的RSS采集与管理系统，支持增量抓取、自动去重、自动标签，**生成可视化HTML报告** / Unified RSS feed fetcher with incremental fetching, auto-dedup, auto-tagging, and **visual HTML reports**
 - **当前版本 / Version**：1.1.0
 - **发布日期 / Date**：2026-03-16
 
 #### zhihu-fetcher
 - **技能名称 / Name**：知乎数据获取 / Zhihu Fetcher
-- **技能描述 / Description**：知乎数据抓取工具，支持三级认证降级机制（Browser Profile → File Cookie → Fallback），确保数据可靠获取 / Zhihu data fetching tool with three-level authentication fallback mechanism
+- **技能描述 / Description**：知乎数据抓取工具，支持三级认证降级机制，**生成可视化HTML报告** / Zhihu data fetching tool with three-level authentication fallback, and **visual HTML reports**
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-15
 
 #### baidu-hot-cn-1
 - **技能名称 / Name**：百度热榜监控 / Baidu Hot Monitor
-- **技能描述 / Description**：百度热搜榜实时监控，支持数据库存储和可视化报告 / Real-time Baidu hot search monitoring with database persistence and HTML reports
+- **技能描述 / Description**：百度热搜榜实时监控，支持数据库存储，**生成可视化HTML报告** / Real-time Baidu hot search monitoring with database persistence, and **visual HTML reports**
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-16
 
 #### weibo-fresh-posts-0
 - **技能名称 / Name**：微博热搜采集 / Weibo Hot Search
-- **技能描述 / Description**：多频道微博热搜数据采集工具，支持热搜总榜、社会榜、文娱榜、生活榜 / Multi-channel Weibo hot search collector supporting hot, social, entertainment, and life channels
+- **技能描述 / Description**：多频道微博热搜数据采集，支持热搜总榜/社会榜/文娱榜/生活榜，**生成可视化HTML报告** / Multi-channel Weibo hot search collector, and **visual HTML reports**
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-16
 
 #### toutiao-news-trends-0
 - **技能名称 / Name**：今日头条热榜 / Toutiao Hot News
-- **技能描述 / Description**：今日头条热榜数据获取，支持持久化存储和可视化展示 / Toutiao hot news fetcher with persistence and visualization
+- **技能描述 / Description**：今日头条热榜数据获取，支持持久化存储，**生成可视化HTML报告** / Toutiao hot news fetcher with persistence, and **visual HTML reports**
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-16
 
 #### douyin-hot-trend-1
 - **技能名称 / Name**：抖音热榜 / Douyin Hot List
-- **技能描述 / Description**：抖音热榜/热搜榜数据获取，包含热门视频、挑战赛、音乐等 / Douyin hot list fetcher including videos, challenges, and music
+- **技能描述 / Description**：抖音热榜/热搜榜数据获取，包含热门视频/挑战赛/音乐，**生成可视化HTML报告** / Douyin hot list fetcher with videos/challenges/music, and **visual HTML reports**
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-16
 - **致谢 / Credits**：基于 [douyin-hot-trend](https://github.com/franklu0819-lang/douyin-hot-trend) 修改，感谢 [@franklu0819-lang](https://github.com/franklu0819-lang)
