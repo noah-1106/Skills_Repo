@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "source": "zhihu-direct",
+    "auth_method": "browser_profile",
+    "fetch_time": "2026-03-15T09:09:50.732Z",
+    "date": "2026-03-15",
+    "count": 30
+  },
+  "data": [
+    {"rank": 1, "title": "「鱼你在一起」菜盆被曝设「障眼法」，总高约 7.5 厘米，实则虚高 3.5 厘米，这算消费欺诈吗？", "heat": "393", "url": "https://www.zhihu.com/question/2015804010213373773"},
+    {"rank": 2, "title": "多人反映贷款逾期被银行划走养老金，银行此举是否合法合规？被划扣者又该如何维权？", "heat": "348", "url": "https://www.zhihu.com/question/2015910417793320691"},
+    {"rank": 3, "title": "刘文祥麻辣烫被曝牛肉实为鸭肉，价格差 4 倍，这种现象在餐饮业是普遍存在的吗？消费者该如何避坑？", "heat": "303", "url": "https://www.zhihu.com/question/2016280494870853302"},
+    {"rank": 4, "title": "如果汉字失传了，释读它的难度有多大？", "heat": "301", "url": "https://www.zhihu.com/question/455135036"},
+    {"rank": 5, "title": "央视「3·15」晚会主题发布，将关注食品安全、公共安全、金融安全、广告市场等领域，哪些看点值得关注？", "heat": "290", "url": "https://www.zhihu.com/question/2016099547433161361"},
+    {"rank": 6, "title": "美以袭击伊朗进入第 16 天，当前局势如何？哪些信息值得关注？", "heat": "285", "url": "https://www.zhihu.com/question/2016267906896322825"},
+    {"rank": 7, "title": "新疆一受伤狐狸在雪场专咬滑单板的人，当地人称疑曾被单板撞伤专门「报复」，狐狸这么记仇吗？", "heat": "279", "url": "https://www.zhihu.com/question/2015551066716989113"},
+    {"rank": 8, "title": "东方航空因航班超售拒载看病女士，航司回应「不让谁登机靠现场工作人员判断」，这反映出什么问题？", "heat": "264", "url": "https://www.zhihu.com/question/2015113794855142897"},
+    {"rank": 9, "title": "2026WTT 重庆冠军赛男单半决赛，中国小将温瑞博 4：2 力克张本智和，如何评价这场比赛？", "heat": "249", "url": "https://www.zhihu.com/question/2016526047311577504"},
+    {"rank": 10, "title": "妈妈意外去世，外婆要求四个继承人均分赔偿金和遗产，均分的概率有多大？", "heat": "159", "url": "https://www.zhihu.com/question/2015024147378500415"}
+  ]
+}

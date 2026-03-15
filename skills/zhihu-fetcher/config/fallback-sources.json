@@ -1,0 +1,38 @@
+{
+  "rateLimit": {
+    "defaultMs": 2000,
+    "description": "默认请求间隔（毫秒）"
+  },
+  "cookie": {
+    "description": "固化的知乎 Cookie（供无 browser profile 时使用）",
+    "zhihu_session": "add here",
+    "z_c0": "",
+    "_xsrf": "add here",
+    "_zap": "add here",
+    "d_c0": "add here",
+    "note": "如需固化 cookie，从浏览器开发者工具复制对应值",
+    "updated_at": "2026-03-15T08:54:00Z"
+  },
+  "auth": {
+    "description": "认证优先级配置",
+    "priority": [
+      "browser_profile",
+      "file_cookie",
+      "fallback_source"
+    ]
+  },
+  "timeout": {
+    "directFetchMs": 10000,
+    "fallbackFetchMs": 15000,
+    "description": "直接抓取和备用源超时时间"
+  },
+  "fallbacks": [
+    {
+      "name": "zhihu-hot-hub",
+      "url": "https://raw.githubusercontent.com/SnailDev/zhihu-hot-hub/master/README.md",
+      "type": "markdown",
+      "priority": 1,
+      "description": "GitHub 知乎热榜备份，每小时更新"
+    }
+  ]
+}
