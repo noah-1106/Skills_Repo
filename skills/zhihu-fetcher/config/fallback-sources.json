@@ -5,11 +5,11 @@
   },
   "cookie": {
     "description": "固化的知乎 Cookie（供无 browser profile 时使用）",
-    "zhihu_session": "add here",
+    "zhihu_session": "V3afjq4jBt1mb7X8LoeX59PCWips42Mt8eq47xaduUI",
     "z_c0": "",
-    "_xsrf": "add here",
-    "_zap": "add here",
-    "d_c0": "add here",
+    "_xsrf": "HCaTZqABaZrV9NMox2ySLcNMaPrKCsXK",
+    "_zap": "7edad9bd-2aed-467f-a7cd-fb911a6ee49a",
+    "d_c0": "rSVUai04_BuPTsufrN3dT7TfktN7Ht1Yzxk=|1773562628",
     "note": "如需固化 cookie，从浏览器开发者工具复制对应值",
     "updated_at": "2026-03-15T08:54:00Z"
   },

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知乎热榜 - 数据可视化</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #f6f6f6;
+            line-height: 1.6;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #0084ff 0%, #0066cc 100%);
+            color: white;
+            padding: 25px 20px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header h1::before {
+            content: "📰";
+        }
+        .header .meta {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        
+        .filters {
+            background: white;
+            padding: 20px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .filter-group label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+        
+        .filter-group input,
+        .filter-group select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+            min-width: 120px;
+        }
+        
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #0084ff;
+            box-shadow: 0 0 0 3px rgba(0,132,255,0.1);
+        }
+        
+        .filter-group input[type="date"] {
+            width: 140px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #666;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .stats {
+            background: #f0f7ff;
+            padding: 12px 20px;
+            font-size: 13px;
+            color: #666;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .stats .highlight {
+            color: #0084ff;
+            font-weight: 600;
+        }
+        
+        .content {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .hot-list {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .hot-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 16px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+            text-decoration: none;
+            color: inherit;
+        }
+        
+        .hot-item:hover {
+            background: #fafafa;
+        }
+        
+        .hot-item:last-child {
+            border-bottom: none;
+        }
+        
+        .rank {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 16px;
+            margin-right: 16px;
+            flex-shrink: 0;
+        }
+        
+        .rank.top1 { background: linear-gradient(135deg, #ff6b6b, #ee5a5a); color: white; }
+        .rank.top2 { background: linear-gradient(135deg, #ffa94d, #ff8c42); color: white; }
+        .rank.top3 { background: linear-gradient(135deg, #ffd43b, #fcc419); color: #333; }
+        .rank.normal { background: #f0f0f0; color: #666; }
+        
+        .item-content {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .item-title {
+            font-size: 15px;
+            color: #1a1a1a;
+            margin-bottom: 6px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        
+        .item-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            color: #999;
+        }
+        
+        .heat-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #ff6b6b;
+            font-weight: 500;
+        }
+        
+        .heat-badge::before {
+            content: "🔥";
+        }
+        
+        .empty {
+            text-align: center;
+            padding: 80px 20px;
+            color: #999;
+        }
+        
+        .empty-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        
+        @media (max-width: 640px) {
+            .filters { padding: 15px; gap: 12px; }
+            .filter-group { flex: 1; min-width: 100px; }
+            .filter-group input,
+            .filter-group select { width: 100%; }
+            .content { padding: 12px; }
+            .hot-item { padding: 12px 15px; }
+            .rank { width: 32px; height: 32px; font-size: 14px; margin-right: 12px; }
+            .item-title { font-size: 14px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>知乎热榜数据可视化</h1>
+        <div class="meta">
+            更新时间: 2026-03-16 04:20 | 
+            数据范围: 2026-03-15 ~ 2026-03-15 | 
+            共 10 条记录
+        </div>
+    </div>
+    
+    <div class="filters">
+        <div class="filter-group">
+            <label>选择日期</label>
+            <select id="dateSelect">
+                <option value="">全部日期</option>
+                <option value="2026-03-15">2026-03-15</option>
+            </select>
+        </div>
+        
+        <div class="filter-group">
+            <label>开始日期</label>
+            <input type="date" id="startDate" value="2026-03-15" min="2026-03-15" max="2026-03-15">
+        </div>
+        
+        <div class="filter-group">
+            <label>结束日期</label>
+            <input type="date" id="endDate" value="2026-03-15" min="2026-03-15" max="2026-03-15">
+        </div>
+        
+        <div class="filter-group">
+            <label>关键词搜索</label>
+            <input type="text" id="keywordFilter" placeholder="输入关键词...">
+        </div>
+        
+        <div class="filter-group">
+            <label>最小热度</label>
+            <input type="number" id="minHeat" placeholder="0" min="0">
+        </div>
+        
+        <button class="btn btn-secondary" onclick="resetFilters()">重置筛选</button>
+    </div>
+    
+    <div class="stats">
+        <span>显示 <span class="highlight" id="showCount">10</span> / 10 条记录</span>
+        <span id="dateRange">日期范围: 2026-03-15 ~ 2026-03-15</span>
+    </div>
+    
+    <div class="content">
+        <div class="hot-list" id="hotList"></div>
+    </div>
+
+    <script>
+        // 数据
+        const articles = [{"rank": 1, "title": "2026 年央视 315 晚会，披露了哪些消费乱象？有哪些值得关注的信息？", "url": "https://www.zhihu.com/question/2016604377415120691", "heat": 3492, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 2, "title": "315 晚会曝光网红鸡爪使用双氧水漂白，生产环境脏乱不堪，对健康危害有多大？", "url": "https://www.zhihu.com/question/2016607467954467246", "heat": 1907, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 3, "title": "胖东来回应「散养鸡蛋被曝角黄素超标」，称适用标准错误，真是这样吗？角黄素超标会有哪些危害？", "url": "https://www.zhihu.com/question/2016444661095424928", "heat": 638, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 4, "title": "网传冰箱贴一直不挪会伤害冰箱，有科学依据吗？冰箱贴到底该怎么贴？", "url": "https://www.zhihu.com/question/2016214590560625837", "heat": 158, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 5, "title": "一边是排队抢油的油车长龙，一边是加速迭代的电车技术，如何看待当下汽车消费的十字路口？", "url": "https://www.zhihu.com/question/2016458550067613931", "heat": 146, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 6, "title": "美以袭击伊朗进入第 16 天，当前局势如何？哪些信息值得关注？", "url": "https://www.zhihu.com/question/2016267906896322825", "heat": 142, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 7, "title": "第四代住宅可行性高嘛？", "url": "https://www.zhihu.com/question/398694606", "heat": 137, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 8, "title": "东方航空因航班超售拒载看病女士，航司回应「不让谁登机靠现场工作人员判断」，这反映出什么问题？", "url": "https://www.zhihu.com/question/2015113794855142897", "heat": 136, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 9, "title": "美国也是能源大国，为什么还怕油价太高？", "url": "https://www.zhihu.com/question/2015300831826690616", "heat": 136, "date": "2026-03-15", "fetched_at": "20:16:55"}, {"rank": 10, "title": "妈妈意外去世，外婆要求四个继承人均分赔偿金和遗产，均分的概率有多大？", "url": "https://www.zhihu.com/question/2015024147378500415", "heat": 124, "date": "2026-03-15", "fetched_at": "20:16:55"}];
+        const allDates = ["2026-03-15"];
+        
+        // 获取排名样式类
+        function getRankClass(rank) {
+            if (rank === 1) return 'top1';
+            if (rank === 2) return 'top2';
+            if (rank === 3) return 'top3';
+            return 'normal';
+        }
+        
+        // 格式化热度
+        function formatHeat(heat) {
+            if (heat >= 10000) {
+                return (heat / 10000).toFixed(1) + '万';
+            }
+            return heat.toLocaleString();
+        }
+        
+        // 渲染列表
+        function renderArticles() {
+            const dateSelect = document.getElementById('dateSelect').value;
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const keyword = document.getElementById('keywordFilter').value.toLowerCase().trim();
+            const minHeat = parseInt(document.getElementById('minHeat').value) || 0;
+            
+            // 过滤
+            let filtered = articles.filter(a => {
+                // 日期选择
+                if (dateSelect && a.date !== dateSelect) return false;
+                
+                // 日期范围
+                if (!dateSelect) {
+                    if (startDate && a.date < startDate) return false;
+                    if (endDate && a.date > endDate) return false;
+                }
+                
+                // 关键词
+                if (keyword && !a.title.toLowerCase().includes(keyword)) return false;
+                
+                // 热度
+                if (minHeat && a.heat < minHeat) return false;
+                
+                return true;
+            });
+            
+            // 更新统计
+            document.getElementById('showCount').textContent = filtered.length;
+            
+            // 按日期分组显示
+            const container = document.getElementById('hotList');
+            
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="empty">
+                        <div class="empty-icon">🔍</div>
+                        <div>没有找到匹配的记录</div>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 按日期分组
+            const grouped = {};
+            filtered.forEach(a => {
+                if (!grouped[a.date]) grouped[a.date] = [];
+                grouped[a.date].push(a);
+            });
+            
+            // 渲染
+            let html = '';
+            Object.keys(grouped).sort().reverse().forEach(date => {
+                const items = grouped[date];
+                html += items.map(a => `
+                    <a href="${a.url}" class="hot-item" target="_blank">
+                        <div class="rank ${getRankClass(a.rank)}">${a.rank}</div>
+                        <div class="item-content">
+                            <div class="item-title">${a.title}</div>
+                            <div class="item-meta">
+                                <span class="heat-badge">${formatHeat(a.heat)}</span>
+                                <span>${a.date}</span>
+                                <span>采集时间: ${a.fetched_at}</span>
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+            });
+            
+            container.innerHTML = html;
+        }
+        
+        // 重置筛选
+        function resetFilters() {
+            document.getElementById('dateSelect').value = '';
+            document.getElementById('startDate').value = allDates[0] || '';
+            document.getElementById('endDate').value = allDates[0] || '';
+            document.getElementById('keywordFilter').value = '';
+            document.getElementById('minHeat').value = '';
+            renderArticles();
+        }
+        
+        // 监听变化
+        document.getElementById('dateSelect').addEventListener('change', renderArticles);
+        document.getElementById('startDate').addEventListener('change', renderArticles);
+        document.getElementById('endDate').addEventListener('change', renderArticles);
+        document.getElementById('keywordFilter').addEventListener('input', renderArticles);
+        document.getElementById('minHeat').addEventListener('input', renderArticles);
+        
+        // 初始渲染
+        renderArticles();
+    </script>
+</body>
+</html>

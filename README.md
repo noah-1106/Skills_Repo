@@ -15,9 +15,11 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 
 #### longtask_system
 - **技能名称 / Name**：长程任务管理系统 / LongTask System
-- **技能描述 / Description**：状态驱动的任务编排引擎，用于管理跨会话的复杂工作流 / State-driven task orchestration engine for managing complex workflows across sessions
-- **当前版本 / Version**：1.1.0
-- **发布日期 / Date**：2026-03-15
+- **技能描述 / Description**：状态驱动的任务编排引擎，用于管理跨会话的复杂工作流，**支持可视化驾驶舱实时监控** / State-driven task orchestration engine for managing complex workflows across sessions, with **visual cockpit for real-time monitoring**
+- **当前版本 / Version**：1.2.0
+- **发布日期 / Date**：2026-03-17
+
+![Task Cockpit](docs/TaskCockpit.png)
 
 #### ec_creator
 - **技能名称 / Name**：执行卡片创建工具 / EC Creator
