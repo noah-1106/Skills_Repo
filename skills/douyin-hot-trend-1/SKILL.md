@@ -94,9 +94,10 @@ node scripts/douyin.js hot 20
 
 ---
 
-## Author / 作者
+## Credits / 致谢
 
-franklu0819-lang
+基于 [douyin-hot-trend](https://github.com/franklu0819-lang/douyin-hot-trend) 修改  
+感谢原作者 @franklu0819-lang
 
 ---
 
