@@ -1,6 +1,6 @@
 ---
 name: longtask_system
-version: 1.2.0
+version: 1.2.1
 description: |
   长程任务执行管理系统 | Long-running Task Execution Management System
   通过状态文件驱动，将长任务拆分为子任务，由守护进程按顺序触发执行，确保每步完成后再执行下一步。
