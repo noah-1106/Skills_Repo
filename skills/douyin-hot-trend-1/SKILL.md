@@ -1,5 +1,5 @@
 ---
-name: douyin-hot-trend
+name: douyin-hot
 version: 1.0.1
 description: |
   抖音热榜获取技能 | Douyin Hot List Fetcher
