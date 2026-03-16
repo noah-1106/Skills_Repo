@@ -40,9 +40,9 @@ if [ ! -f "$AGENTS_CONFIG" ]; then
     exit 1
 fi
 
-# 从 task 文件获取 agent_id
-AGENT_ID=$(jq -r '.agent_id // "bibi"' "$TASK_FILE")
-SESSION_NAME=$(jq -r '.session_name // "main"' "$TASK_FILE")
+# 从 task 文件的当前 step 获取 agent_id
+AGENT_ID=$(jq -r ".steps[] | select(.id == $STEP_ID) | .agent_id // \"bibi\"" "$TASK_FILE")
+SESSION_NAME=$(jq -r ".steps[] | select(.id == $STEP_ID) | .session_name // \"main\"" "$TASK_FILE")
 
 # 从 agents.json 数组中查找 agent_name
 AGENT_NAME=$(jq -r ".agents[] | select(.agent_id == \"$AGENT_ID\") | .agent_name // \"$AGENT_ID\"" "$AGENTS_CONFIG")
@@ -92,8 +92,8 @@ sleep 5
 # 方式1: 通过 OpenClaw CLI 直接发送（优先）
 CLI_SUCCESS=false
 if command -v openclaw >/dev/null 2>&1; then
-    # 使用 openclaw CLI 发送消息到完整 session ID
-    if echo "$MESSAGE" | openclaw sessions send "$FULL_SESSION" 2>/dev/null; then
+    # 使用 openclaw CLI 发送消息到指定 Agent 的指定 Session
+    if openclaw agent --agent "$AGENT_ID" --session-id "$FULL_SESSION" --message "$MESSAGE" 2>/dev/null; then
         CLI_SUCCESS=true
     else
         echo "Failed to send via openclaw CLI, falling back to inbox"

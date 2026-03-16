@@ -102,8 +102,8 @@ trigger_agent() {
     task_id=$(jq -r '.task_id' "$task_file")
     step_name=$(jq -r ".steps[] | select(.id == $step_id) | .name" "$task_file")
     params=$(jq -r ".steps[] | select(.id == $step_id) | .params // {}" "$task_file")
-    agent_id=$(jq -r '.agent_id // "bibi"' "$task_file")
-    session_name=$(jq -r '.session_name // "main"' "$task_file")
+    agent_id=$(jq -r ".steps[] | select(.id == $step_id) | .agent_id // .agent_id // \"bibi\"" "$task_file")
+    session_name=$(jq -r ".steps[] | select(.id == $step_id) | .session_name // .session_name // \"main\"" "$task_file")
     
     log "Triggering step $step_id: $step_name (agent: $agent_id, session: $session_name)"
     
