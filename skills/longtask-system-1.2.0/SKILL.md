@@ -237,9 +237,9 @@ Cockpit 会在以下情况自动生成/更新：
 open tasks/cockpit.html
 ```
 
-### 截图预览
+### 截图预览 / Screenshot
 
-![Task Cockpit Preview](docs/TaskCockpit.png)
+See preview in [GitHub README](https://github.com/noah-1106/Skills_Repo#longtask_system)
 
 ---
 
