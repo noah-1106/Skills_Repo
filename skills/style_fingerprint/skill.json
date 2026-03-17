@@ -1,0 +1,29 @@
+{
+  "name": "style-fingerprint",
+  "version": "1.0.0",
+  "description": "Analyze and save Chinese writing style fingerprints (no dependencies)",
+  "author": "hongyunai",
+  "bin": "style_fingerprint.py",
+  "dependencies": [],
+  "commands": {
+    "analyze": {
+      "description": "Analyze text and save fingerprint",
+      "args": ["--text", "--file", "--name"]
+    },
+    "list": {
+      "description": "List all saved fingerprints"
+    },
+    "show": {
+      "description": "Show fingerprint details",
+      "args": ["--name"]
+    },
+    "delete": {
+      "description": "Delete a fingerprint",
+      "args": ["--name"]
+    },
+    "export": {
+      "description": "Export style guide for writing agent",
+      "args": ["--name", "--output"]
+    }
+  }
+}

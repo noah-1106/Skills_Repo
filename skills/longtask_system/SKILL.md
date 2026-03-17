@@ -1,11 +1,12 @@
 ---
 name: longtask_system
-version: 1.1.0
+version: 1.2.0
 description: |
   长程任务执行管理系统 | Long-running Task Execution Management System
   通过状态文件驱动，将长任务拆分为子任务，由守护进程按顺序触发执行，确保每步完成后再执行下一步。
   State-file driven system that breaks long tasks into subtasks, triggered sequentially by daemon to ensure each step completes before next.
   支持多 Agent 协作 | Multi-Agent collaboration supported.
+  新增可视化驾驶舱 | Visual Cockpit for real-time monitoring.
 
 重要：为了确保长程任务执行的效果，每一个子任务会强制通过/new重置对话后执行！如果你是单agent模式，可以在notify_agent.sh脚本中的消息构建删除/new命令。如果是多agent模式，请尽量确保你的任务中仅包含执行agent，不要包含监督agent。
 
@@ -38,6 +39,7 @@ longtask_system/
 ├── notify_agent.sh    # 通知 Agent（CLI/inbox 双模式）
 ├── consume_inbox.sh   # Agent 读取并删除 inbox 任务
 ├── complete_step.sh   # 标记任务完成
+├── cockpit_renderer.py # 可视化驾驶舱生成器 (Cockpit Visualizer) ⭐ NEW
 ├── agents.json        # Agent 配置
 ├── agent_inbox.json   # 消息收件箱（CLI 失败时备用）
 ├── task_template.json # 任务模板
@@ -70,12 +72,17 @@ cp task_template.json tasks/my_task.json
 ### 3. 启动守护进程
 
 ```bash
-# 后台运行
-nohup ./daemon.sh my_task > longtask_log/daemon.log 2>&1 &
+# 方案1: screen（推荐，跨平台，可恢复查看）
+screen -d -m -S longtask bash daemon.sh my_task
+
+# 方案2: setsid（Linux 环境）
+setsid bash daemon.sh my_task > longtask_log/daemon.log 2>&1 &
 
 # 或前台调试
 ./daemon.sh my_task
 ```
+
+**注意**：OpenClaw 等 Agent 框架在 session 结束时会清理子进程，必须使用 `screen` 或 `setsid` 确保 daemon 不被杀掉。
 
 ### 4. Agent 消费任务
 
@@ -200,6 +207,42 @@ cat agent_inbox.json | jq                    # 检查 inbox
 cat tasks/任务名.json | jq                   # 检查任务状态
 ```
 
+---
+
+## 🎨 Cockpit 可视化驾驶舱 / Visual Cockpit ⭐ NEW
+
+实时监控任务执行状态的可视化界面。
+
+### 功能特性 | Features
+
+- 🐕 **萌宠主题** - Pet Workshop 可爱风格，缓解等待焦虑
+- 🔄 **实时刷新** - 每 3 秒自动更新状态
+- 📊 **进度可视化** - 果酱流动效果进度条
+- 🎭 **状态动画** - 不同状态对应不同小动物动画:
+  - 🐱 `done` - 猫咪满意
+  - 🐕 `doing` - 小狗挖土（摇摆动画）
+  - 💤 `pending` - 小猫睡觉（呼吸动画）
+  - 👻 `failed` - 小鬼出现
+
+### 自动生成
+
+Cockpit 会在以下情况自动生成/更新：
+- 任务状态变更时（daemon 自动触发）
+- 手动运行: `python3 cockpit_renderer.py tasks/任务名.json`
+
+### 查看驾驶舱
+
+```bash
+# 生成后打开浏览器查看
+open tasks/cockpit.html
+```
+
+### 截图预览 / Screenshot
+
+See preview in [GitHub README](https://github.com/noah-1106/Skills_Repo#longtask_system)
+
+---
+
 ## 注意事项
 
 
@@ -209,6 +252,12 @@ cat tasks/任务名.json | jq                   # 检查任务状态
 4. **daemon 自动退出**：状态文件超过 20 分钟未更新时退出
 
 ## 更新日志
+
+- **v1.2** (2026-03-17)
+  - 新增 `cockpit_renderer.py` 可视化驾驶舱，萌宠主题设计
+  - 修复 daemon 在 OpenClaw 环境下被 session 杀掉的问题（使用 screen/setsid）
+  - 优化 agent_id 读取逻辑，支持 step 级别覆盖
+  - 优化驾驶舱 Agent 显示，正确显示 step 级 agent_id
 
 - **v1.1** (2026-03-13)
   - 新增 `consume_inbox.sh`，实现读取即删除

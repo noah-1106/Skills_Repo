@@ -27,6 +27,10 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **当前版本 / Version**：1.1.0
 - **发布日期 / Date**：2026-03-15
 
+---
+
+## 内容创作 / Content Creation
+
 ### 数据采集 / Data Collection
 
 📊 **所有数据采集技能均包含可视化 HTML 报告功能**
