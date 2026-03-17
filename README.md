@@ -1,7 +1,7 @@
 ![Skills_Repo Banner](docs/Skills_Repo.jpg)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Open Collective](https://img.shields.io/opencollective/all/noah-tan?label=Support%20Me&logo=open-collective&color=7B99FF)](https://opencollective.com/noah-tan)
+[![爱发电](https://img.shields.io/badge/爱发电-支持我-FF6B6B?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjx0ZXh0IHg9IjEyIiB5PSIxOCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5oSb5YiGPC90ZXh0Pjwvc3ZnPg==&logoColor=white)](https://ifdian.net/a/noahtan)
 
 # Skills_Repo
 
@@ -135,4 +135,4 @@ PRs and Issues are welcome!
 如果这个项目对你有帮助，可以请我喝杯咖啡 ☕️
 If this project helps you, buy me a coffee ☕️
 
-[![Open Collective](https://img.shields.io/opencollective/all/noah-tan?label=Buy%20Me%20A%20Coffee&logo=open-collective&color=7B99FF)](https://opencollective.com/noah-tan)
+[![爱发电](https://img.shields.io/badge/爱发电-支持我-FF6B6B?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjx0ZXh0IHg9IjEyIiB5PSIxOCIgZm9udC1zaXplPSIxMiIgdGV4dC1hbmNob3I9Im1pZGRsZSI+5oSb5YiGPC90ZXh0Pjwvc3ZnPg==&logoColor=white)](https://ifdian.net/a/noahtan)
