@@ -31,7 +31,15 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 
 ## 内容创作 / Content Creation
 
-### 数据采集 / Data Collection
+#### style_fingerprint
+- **技能名称 / Name**：写作风格指纹 / Style Fingerprint
+- **技能描述 / Description**：分析并保存中文写作风格指纹，提取句法模式、词汇偏好、修辞特征，供AI写作助手使用 / Analyze and save Chinese writing style fingerprints, extracting syntax patterns, lexical preferences, and rhetorical features for AI writing agents
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-03-17
+
+---
+
+## 数据采集 / Data Collection
 
 📊 **所有数据采集技能均包含可视化 HTML 报告功能**
 📊 **All data collection skills include visual HTML reports**
