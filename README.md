@@ -37,6 +37,12 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-17
 
+#### weibo-publisher
+- **技能名称 / Name**：微博发布器 / Weibo Publisher
+- **技能描述 / Description**：通过浏览器自动化在 m.weibo.cn 发布微博内容，支持图文发布、自动验证和防重复机制 / Publish to Weibo via browser automation on m.weibo.cn, supporting text/image posts with verification and anti-duplication measures
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-03-19
+
 ---
 
 ## 数据采集 / Data Collection
