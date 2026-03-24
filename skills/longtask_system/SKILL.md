@@ -1,6 +1,6 @@
 ---
 name: longtask_system
-version: 1.2.1
+version: 1.2.2
 description: |
   长程任务执行管理系统 | Long-running Task Execution Management System
   通过状态文件驱动，将长任务拆分为子任务，由守护进程按顺序触发执行，确保每步完成后再执行下一步。
@@ -253,10 +253,13 @@ See preview in [GitHub README](https://github.com/noah-1106/Skills_Repo#longtask
 
 ## 更新日志
 
-- **v1.2.1** (2026-03-24)
+- **v1.2.2** (2026-03-24)
   - 修复 `complete_step.sh` 未触发驾驶舱渲染的问题
   - 步骤完成时（由 Agent 回调）现在会正确更新驾驶舱状态
   - 确保任务最终完成时驾驶舱显示 100% 进度
+
+- **v1.2.1** (2026-03-24)
+  - (已废弃，未包含完整修复)
 
 - **v1.2** (2026-03-17)
   - 新增 `cockpit_renderer.py` 可视化驾驶舱，萌宠主题设计
