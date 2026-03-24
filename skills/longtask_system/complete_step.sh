@@ -41,13 +41,24 @@ update_step() {
     local file="$1"
     local jq_expr="$2"
     local tmp_file="${file}.tmp.$$"
-    
+
     if jq "$jq_expr" "$file" > "$tmp_file" 2>/dev/null; then
         mv "$tmp_file" "$file"
         return 0
     else
         rm -f "$tmp_file"
         return 1
+    fi
+}
+
+# 渲染驾驶舱 UI
+render_cockpit() {
+    local task_file="$1"
+    local renderer="${SCRIPT_DIR}/cockpit_renderer.py"
+
+    # 如果渲染器存在，则调用
+    if [ -f "$renderer" ] && command -v python3 >/dev/null 2>&1; then
+        python3 "$renderer" "$task_file" >/dev/null 2>&1 &
     fi
 }
 
@@ -81,11 +92,14 @@ fi
 # 执行更新
 if update_step "$TASK_FILE" "$JQ_EXPR"; then
     echo "Success"
-    
+
+    # 触发驾驶舱渲染（步骤完成后更新UI）
+    render_cockpit "$TASK_FILE"
+
     # 记录独立任务日志
     TASK_LOG="${LOGS_DIR}/task_${TASK_NAME}.log"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Step $STEP_ID: $RESULT (global_retry: ${GLOBAL_RETRY})" >> "$TASK_LOG"
-    
+
     exit 0
 else
     echo "Failed, refer to the logs"
