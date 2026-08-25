@@ -1,0 +1,48 @@
+[
+  {
+    "id": 1,
+    "query": "帮我看看这个小红书讲的是什么，https://xhslink.cn/o/CMaI3HCdoo",
+    "should_trigger": true,
+    "expected_output": "调用 xhs-dl 处理该链接，输出资源卡片（Markdown），卡片含标题、类型(视频)、标签、口播转写、画面OCR、资源线索。",
+    "expectations": [
+      "卡片标题与笔记标题一致（文档转换之神…）",
+      "卡片包含「口播转写」段（有口播的视频）",
+      "卡片包含「画面OCR」段（双通道：有口播也抽帧）",
+      "卡片包含「资源线索」段，识别出 anydoc 等英文标签"
+    ]
+  },
+  {
+    "id": 2,
+    "query": "把这条小红书笔记存一下 https://xhslink.cn/o/5EpQfuwB3PG",
+    "should_trigger": true,
+    "expected_output": "调用 xhs-dl 处理图文链接，输出资源卡片 + 下载原图。",
+    "expectations": [
+      "卡片类型为「图文」",
+      "卡片含「正文」段（肝了 16 小时…）",
+      "卡片含「画面OCR」段（原图 OCR 读出的技术文档文字）",
+      "out/<note_id>/ 下有 3 张原图（01.jpg/02.jpg/03.jpg）"
+    ]
+  },
+  {
+    "id": 3,
+    "query": "这个视频没有声音，能提取里面的文字吗 https://xhslink.cn/o/2pheEozSLGR",
+    "should_trigger": true,
+    "expected_output": "调用 xhs-dl 处理无口播演示视频，转写为空时自动抽帧 OCR，输出画面文字。",
+    "expectations": [
+      "卡片标注该视频无口播（转写为空被处理，不是报错）",
+      "卡片含「画面OCR」段，识别出 Firecrawl（画面正确拼写）",
+      "OCR 结果纠正了标题拼写错误 Fireclawl → Firecrawl"
+    ]
+  },
+  {
+    "id": 4,
+    "query": "https://example.com/not-a-xhs-link 这条链接是什么",
+    "should_trigger": false,
+    "expected_output": "识别为无效/非小红书链接，给出友好提示，不崩溃。",
+    "expectations": [
+      "不报 Python traceback",
+      "提示无法提取 note_id 或不是小红书链接",
+      "退出码非 0 但信息明确"
+    ]
+  }
+]

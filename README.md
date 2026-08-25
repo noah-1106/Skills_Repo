@@ -87,6 +87,13 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **发布日期 / Date**：2026-03-16
 - **致谢 / Credits**：基于 [douyin-hot-trend](https://github.com/franklu0819-lang/douyin-hot-trend) 修改，感谢 [@franklu0819-lang](https://github.com/franklu0819-lang)
 
+#### xhs-dl
+- **技能名称 / Name**：小红书单篇下载器 / Xiaohongshu (XHS) Single-Note Downloader
+- **技能描述 / Description**：把小红书笔记链接（视频/图文）变成结构化资源卡片——标题/正文/标签/博主 + **本地ASR口播转写**（中英混合）+ **画面OCR**（工具名/仓库名权威拼写，能纠正标题拼写错误）+ 图文原图下载。全本地运行，**一套 Python 脚本双平台（Mac/Windows）**，零外部服务依赖 / Turn XHS note links into structured resource cards — title/body/tags/author + **local ASR transcription** (Chinese-English) + **screen OCR** (authoritative tool/repo name spelling, auto-corrects typos) + image download. Fully local, **one Python codebase for both Mac & Windows**, zero external services
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-08-25
+- **安装 / Install**：`python3 scripts/setup.py`（跨平台：建 venv + 装依赖 + 下载 ASR 模型 224MB，走 hf-mirror）
+
 ### Coze 集成 / Coze Integration
 
 #### coze-workflow
