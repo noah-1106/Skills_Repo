@@ -62,7 +62,7 @@ def main():
     py = venv_python()
 
     # 2. 依赖（平台自动选择）
-    deps = ["sherpa-onnx", "numpy"]
+    deps = ["sherpa-onnx", "numpy", "yt-dlp"]  # yt-dlp 内置: 12MB 纯 Python 零依赖
     if sys.platform == "darwin":
         deps.append("ocrmac")
     elif sys.platform == "win32":

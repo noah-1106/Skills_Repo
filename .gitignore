@@ -1,0 +1,20 @@
+# 运行时产物（不入库）
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# 模型文件（setup.py 首次安装时下载）
+models/
+*.onnx
+
+# 输出产物
+out/
+data/
+
+# macOS
+.DS_Store
+
+# 技能运行时生成的临时目录
+_frames/
+verify_frames/

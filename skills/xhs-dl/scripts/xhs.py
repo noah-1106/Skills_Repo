@@ -82,11 +82,23 @@ def _find_tool(name: str, candidates: list) -> str:
     return name
 
 
-YTDLP = os.environ.get("YTDLP") or _find_tool("yt-dlp", [
-    os.path.expanduser("~/Library/Python/3.9/bin/yt-dlp"),
-    "/opt/homebrew/bin/yt-dlp",
-    "/usr/local/bin/yt-dlp",
-])
+def _venv_tool(name: str) -> str:
+    """优先用 .venv 内置工具(如 yt-dlp 由 setup.py 装进 venv)"""
+    if sys.platform == "win32":
+        cand = BASE_DIR / ".venv" / "Scripts" / f"{name}.exe"
+    else:
+        cand = BASE_DIR / ".venv" / "bin" / name
+    if cand.exists():
+        return str(cand)
+    return ""
+
+
+YTDLP = (os.environ.get("YTDLP") or _venv_tool("yt-dlp")
+         or _find_tool("yt-dlp", [
+             os.path.expanduser("~/Library/Python/3.9/bin/yt-dlp"),
+             "/opt/homebrew/bin/yt-dlp",
+             "/usr/local/bin/yt-dlp",
+         ]))
 FFMPEG = os.environ.get("FFMPEG") or _find_tool("ffmpeg", [
     "/opt/homebrew/bin/ffmpeg",
     "/usr/local/bin/ffmpeg",
