@@ -1,0 +1,10 @@
+# scribe · Python 依赖（GitHub 版用 pip install -r requirements.txt 安装）
+# 拷贝版无需安装——.venv/ 已内置全部依赖
+funasr>=1.4
+torch>=2.1
+torchaudio>=2.1
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+soundfile>=0.12
+websockets>=12.0

@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>scribe · 本地录音转写</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg-soft: #12121a;
+    --card: #16161f;
+    --border: #262633;
+    --text: #e8e8ef;
+    --text-dim: #8b8b9e;
+    --accent: #00c2ff;
+    --accent2: #00e6a8;
+    --rec: #ff4757;
+    --spk1: #00c2ff;
+    --spk2: #ffb020;
+    --spk3: #00e6a8;
+    --spk4: #ff6b9d;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  header { margin-bottom: 28px; }
+  .logo { display: flex; align-items: baseline; gap: 12px; }
+  .logo h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+  .logo h1 em { font-style: normal; color: var(--accent); }
+  .logo .tag { color: var(--text-dim); font-size: 13px; }
+  .status { margin-top: 10px; font-size: 13px; color: var(--text-dim); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; transition: background .3s; }
+  .dot.ok { background: var(--accent2); box-shadow: 0 0 8px rgba(0,230,168,.5); }
+  .dot.warn { background: #ffb020; }
+
+  /* ---- 模式切换 ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab {
+    flex: 1; text-align: center; padding: 11px 0; font-size: 14px; cursor: pointer;
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 11px;
+    color: var(--text-dim); transition: all .15s; user-select: none;
+  }
+  .tab.active { border-color: var(--accent); color: var(--accent); background: #101722; }
+  .tab:hover { border-color: #3a3a4e; }
+  .tab.active:hover { border-color: var(--accent); }
+  .pane { display: none; }
+  .pane.show { display: block; }
+
+  /* ---- 录音面板 ---- */
+  .rec-panel {
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px;
+    padding: 26px 24px; text-align: center;
+  }
+  .rec-btn {
+    width: 88px; height: 88px; border-radius: 50%; cursor: pointer;
+    border: 2px solid var(--rec); background: transparent;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: all .2s;
+  }
+  .rec-btn .inner {
+    width: 56px; height: 56px; border-radius: 50%; background: var(--rec);
+    transition: all .2s;
+  }
+  .rec-btn:hover { box-shadow: 0 0 20px rgba(255,71,87,.25); }
+  .rec-btn.recording .inner { border-radius: 10px; width: 34px; height: 34px; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(255,71,87,.4); } 50% { box-shadow: 0 0 0 10px rgba(255,71,87,0); } }
+  .rec-time { font-family: var(--mono); font-size: 26px; margin-top: 14px; letter-spacing: 1px; color: var(--text-dim); }
+  .rec-time.on { color: var(--rec); }
+  .rec-hint { margin-top: 8px; font-size: 12.5px; color: var(--text-dim); }
+  .rec-state { margin-top: 4px; font-size: 12.5px; color: var(--accent2); min-height: 18px; }
+  .vu { margin: 14px auto 0; width: 220px; height: 5px; border-radius: 3px; background: #1b1b26; overflow: hidden; }
+  .vu i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent2), var(--accent)); transition: width .1s; }
+
+  /* ---- 上传面板 ---- */
+  .drop {
+    border: 1.5px dashed var(--border);
+    border-radius: 14px;
+    background: var(--bg-soft);
+    padding: 52px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); background: #14141e; }
+  .drop .big { font-size: 17px; margin-bottom: 8px; }
+  .drop .small { color: var(--text-dim); font-size: 13px; line-height: 1.7; }
+  .drop kbd {
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px;
+    background: var(--card);
+  }
+
+  .opts { margin-top: 14px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); }
+  .opts input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .opts label { cursor: pointer; user-select: none; }
+  .opts .hint { font-size: 12px; color: #55555f; }
+
+  .bar {
+    margin-top: 16px; display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; font-size: 13px;
+  }
+  .bar .fname { font-family: var(--mono); color: var(--accent); flex: 1;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar .phase { color: var(--text-dim); }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .results { margin-top: 24px; display: none; }
+  .results.show { display: block; }
+  .meta { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+  .pill {
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
+    background: var(--card);
+  }
+  .pill b { color: var(--accent2); font-weight: 600; }
+  .spacer { flex: 1; }
+  .btn {
+    background: var(--card); border: 1px solid var(--border); color: var(--text);
+    border-radius: 9px; padding: 7px 14px; font-size: 13px; cursor: pointer;
+    transition: border-color .15s, color .15s; text-decoration: none; display: inline-block;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: .35; cursor: not-allowed; pointer-events: none; }
+
+  .sents { background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+  .sent {
+    display: flex; gap: 12px; padding: 10px 18px; font-size: 14.5px; line-height: 1.65;
+    border-bottom: 1px solid #1b1b26; align-items: baseline;
+  }
+  .sent:last-child { border-bottom: none; }
+  .sent:hover { background: #15151f; }
+  .sent .t { font-family: var(--mono); font-size: 12px; color: var(--accent);
+    flex-shrink: 0; width: 68px; user-select: none; }
+  .sent .spk {
+    font-size: 12px; font-weight: 600; flex-shrink: 0; width: 62px; user-select: none;
+  }
+  .sent .spk.s1 { color: var(--spk1); }
+  .sent .spk.s2 { color: var(--spk2); }
+  .sent .spk.s3 { color: var(--spk3); }
+  .sent .spk.s4 { color: var(--spk4); }
+  .sent .x { flex: 1; }
+  .sent.partial .x, .sent.partial .t { opacity: .45; font-style: italic; }
+  .sent.partial .t::after { content: "…"; }
+
+  .proj-input {
+    margin-top: 12px; display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 11px;
+    padding: 9px 14px; font-size: 13px;
+  }
+  .proj-input .lbl { color: var(--text-dim); flex-shrink: 0; }
+  .proj-input input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: var(--text); font-size: 13.5px; font-family: inherit;
+  }
+  .proj-input input::placeholder { color: #55555f; }
+  .projects { margin-top: 32px; }
+  .projects h3 { font-size: 13px; color: var(--text-dim); font-weight: 500; margin-bottom: 10px; }
+  .proj-row {
+    display: flex; align-items: center; gap: 12px; font-size: 13px;
+    background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 14px; margin-bottom: 6px;
+  }
+  .proj-row .pn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-row .pd { color: #55555f; font-size: 12px; font-family: var(--mono); }
+  .proj-row .btn { padding: 3px 10px; font-size: 12px; }
+  .empty { text-align: center; color: var(--text-dim); padding: 40px; font-size: 14px; }
+  .toast {
+    position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: var(--card); border: 1px solid var(--accent); color: var(--text);
+    border-radius: 10px; padding: 10px 20px; font-size: 13px; opacity: 0;
+    transition: all .25s; pointer-events: none; z-index: 9;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  footer { margin-top: 40px; text-align: center; color: #55555f; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo"><h1><em>scribe</em></h1><span class="tag">本地录音转写 · SenseVoice</span></div>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">正在检查服务…</span></div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" id="tabLive">🎙 实时录音转写</div>
+    <div class="tab" id="tabFile">📂 上传文件转写</div>
+  </div>
+
+  <!-- ========== 实时录音面板 ========== -->
+  <div class="pane show" id="paneLive">
+    <div class="rec-panel">
+      <button class="rec-btn" id="recBtn" title="开始 / 停止"><span class="inner"></span></button>
+      <div class="rec-time" id="recTime">00:00</div>
+      <div class="vu"><i id="vuBar"></i></div>
+      <div class="rec-state" id="recState"></div>
+      <div class="rec-hint">点击开始录音，说话内容实时出字 · 停顿后自动断句 · 全程本地</div>
+    </div>
+    <div class="proj-input">
+      <span class="lbl">📁 项目</span>
+      <input id="projName" placeholder="留空则录音开始时自动生成（如：录音 08-17 15:02）">
+    </div>
+    <div class="opts">
+      <input type="checkbox" id="ckDiarizeLive">
+      <label for="ckDiarizeLive">标记说话人（多人对话时勾选）</label>
+      <span class="hint">· CAM++ 声纹聚类 · 短促插话可能归不准</span>
+    </div>
+  </div>
+
+  <!-- ========== 文件上传面板 ========== -->
+  <div class="pane" id="paneFile">
+    <div class="drop" id="drop">
+      <div class="big">拖入音频或视频文件</div>
+      <div class="small">
+        支持 mp3 / wav / m4a / mp4 / mov 等常见格式，视频自动提取音轨<br>
+        或 <kbd>点击选择文件</kbd> · 全程本地运行，文件不出本机
+      </div>
+      <input type="file" id="fileInput" hidden accept="audio/*,video/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.mp4,.mov,.mkv,.webm">
+    </div>
+    <div class="opts">
+      <input type="checkbox" id="ckDiarize">
+      <label for="ckDiarize">标记说话人（多人对话时勾选）</label>
+      <span class="hint">· CAM++ 声纹聚类，首次勾选多加载 28MB 模型 · 短促插话可能归不准</span>
+    </div>
+    <div class="bar" id="bar" style="display:none">
+      <div class="spinner"></div>
+      <span class="fname" id="barName"></span>
+      <span class="phase" id="barPhase">上传中…</span>
+    </div>
+  </div>
+
+  <!-- ========== 结果区（两种模式共用） ========== -->
+  <div class="results" id="results">
+    <div class="meta">
+      <span class="pill" id="mProjPill" style="display:none">📁 <b id="mProj">-</b></span>
+      <span class="pill">时长 <b id="mDur">-</b></span>
+      <span class="pill">推理 <b id="mInfer">-</b></span>
+      <span class="pill" id="mRtfPill"><b id="mRtf">-</b>x 实时</span>
+      <span class="pill"><b id="mCount">-</b> 句</span>
+      <span class="pill" id="mSpkPill" style="display:none"><b id="mSpk">-</b> 位说话人</span>
+      <span class="spacer"></span>
+      <button class="btn" id="btnCopy">复制全文</button>
+      <a class="btn" id="dlTxt" href="#">下载 TXT</a>
+      <a class="btn primary" id="dlSrt" href="#">下载 SRT 字幕</a>
+    </div>
+    <div class="sents" id="sents"></div>
+  </div>
+
+  <div class="projects" id="projects" style="display:none">
+    <h3>📁 已保存项目</h3>
+    <div id="projList"></div>
+  </div>
+
+  <footer>SenseVoice-Small + FSMN-VAD + CAM++ · 纯 CPU · 中 / 英 / 粤自动识别 · 实时 / 文件双模式</footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const drop = $("drop"), fileInput = $("fileInput");
+let lastResult = null;
+
+// ---- 健康检查 ----
+async function checkHealth() {
+  try {
+    const r = await fetch("/api/health");
+    const j = await r.json();
+    if (j.ok) {
+      $("dot").className = "dot ok";
+      $("statusText").textContent = `就绪 · 模型已常驻（加载 ${j.model_load_seconds}s）· 解码器 ${j.decoder}`;
+    } else {
+      $("dot").className = "dot warn";
+      $("statusText").textContent = "模型加载中…";
+      setTimeout(checkHealth, 2000);
+    }
+  } catch (e) {
+    $("dot").className = "dot warn";
+    $("statusText").textContent = "服务未启动：运行 ./start.sh";
+  }
+}
+checkHealth();
+
+// ---- 模式切换 ----
+$("tabLive").addEventListener("click", () => switchTab(true));
+$("tabFile").addEventListener("click", () => switchTab(false));
+function switchTab(live) {
+  $("tabLive").classList.toggle("active", live);
+  $("tabFile").classList.toggle("active", !live);
+  $("paneLive").classList.toggle("show", live);
+  $("paneFile").classList.toggle("show", !live);
+}
+
+function fmtHMS(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const h = String(Math.floor(sec / 3600)).padStart(2, "0");
+  const m = String(Math.floor((sec % 3600) / 60)).padStart(2, "0");
+  const s = String(sec % 60).padStart(2, "0");
+  return `${h}:${m}:${s}`;
+}
+function spkClass(name) {
+  const n = parseInt((name || "").replace(/\D/g, "")) || 0;
+  return "s" + (((n - 1) % 4) + 1);
+}
+function toastMsg(t) {
+  const toast = $("toast");
+  toast.textContent = t;
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 1800);
+}
+
+// =====================================================
+//  实时录音模式
+// =====================================================
+let ws = null, recorder = null, audioCtx = null, analyser = null;
+let liveSeq = 0, liveSents = [], liveDiarize = false, livePartialRow = null, liveProject = "";
+let recT0 = 0, recTimer = null, flushTimer = null, lastBlockAt = 0, vuTimer = null;
+
+$("recBtn").addEventListener("click", () => {
+  if (recorder && recorder.state !== "inactive") stopRecording();
+  else startRecording();
+});
+
+function autoProjectName() {
+  const d = new Date();
+  const p = n => String(n).padStart(2, "0");
+  return `录音 ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // 项目名：用户没填就自动生成并回填到输入框（录音中/结束后都可改，
+    // 改名在下方「已保存项目」里进行，落盘名以开始录音时为准）。
+    if (!$("projName").value.trim()) $("projName").value = autoProjectName();
+    liveProject = $("projName").value.trim();
+    // 归零状态
+    clearTimeout(finalWatchdog);
+    liveSents = []; liveSeq = 0; livePartialRow = null;
+    liveDiarize = $("ckDiarizeLive").checked;
+    $("sents").innerHTML = "";
+    $("results").classList.add("show");
+    $("mSpkPill").style.display = "none";
+    $("mProjPill").style.display = ""; $("mProj").textContent = liveProject;
+    $("mDur").textContent = "-"; $("mInfer").textContent = "实时";
+    $("mRtfPill").style.display = "none";
+    $("mCount").textContent = "0";
+    $("dlTxt").removeAttribute("href"); $("dlSrt").removeAttribute("href");
+    $("dlTxt").classList.add("disabled"); $("dlSrt").classList.add("disabled");
+
+    // WebSocket
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/ws/live`);
+    ws.onmessage = onLiveMsg;
+    ws.onerror = () => { $("recState").textContent = "连接失败"; };
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+    ws.send(JSON.stringify({ type: "start", diarize: liveDiarize, project: liveProject }));
+
+    // 音量条
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 512;
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    vuTimer = setInterval(() => {
+      analyser.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+      $("vuBar").style.width = Math.min(100, peak / 64 * 100) + "%";
+    }, 90);
+
+    // 采集：每 500ms 一块 webm/opus
+    recorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+    recorder.ondataavailable = async e => {
+      if (e.data.size && ws && ws.readyState === 1) {
+        const b64 = await blobToB64(e.data);
+        ws.send(JSON.stringify({ type: "block", seq: liveSeq++, data: b64 }));
+        lastBlockAt = Date.now();
+      }
+    };
+    recorder.start(500);
+
+    // 停顿检测：>=1.6s 无新块 → 请求 partial
+    lastBlockAt = Date.now();
+    flushTimer = setInterval(() => {
+      const idle = Date.now() - lastBlockAt;
+      if (idle >= 1600 && ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type: "flush" }));
+        // 有暂显句挂着的兜底：VAD 偶尔对短促停顿不报闭合，导致暂显永远
+        // 替换不成定稿。暂停 3.5s 后直接把驻留段冲成定稿句。
+        if (idle >= 3500 && livePartialRow) {
+          ws.send(JSON.stringify({ type: "force_flush" }));
+        }
+        lastBlockAt = Date.now();
+      }
+    }, 800);
+
+    recT0 = Date.now();
+    recTimer = setInterval(() => {
+      $("recTime").textContent = fmtHMS((Date.now() - recT0) / 1000).slice(3);
+    }, 500);
+    $("recTime").classList.add("on");
+    $("recBtn").classList.add("recording");
+    $("recState").textContent = liveDiarize ? "录音中 · 说话人标记已开启" : "录音中";
+  } catch (e) {
+    $("recState").textContent = "无法访问麦克风：" + e.message;
+  }
+}
+
+let finalWatchdog = null;
+function stopRecording() {
+  if (recorder) { recorder.stop(); recorder.stream.getTracks().forEach(t => t.stop()); }
+  clearInterval(recTimer); clearInterval(flushTimer); clearInterval(vuTimer);
+  if (audioCtx) audioCtx.close();
+  $("vuBar").style.width = "0%";
+  $("recTime").classList.remove("on");
+  $("recBtn").classList.remove("recording");
+  $("recState").textContent = "正在收口识别…";
+  // 等 recorder 把最后一块推完再 stop
+  setTimeout(() => {
+    if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "stop" }));
+  }, 600);
+  // 收口兜底：20s 没收到 final 就自愈（提示并亮出已有结果），不再无限卡死
+  clearTimeout(finalWatchdog);
+  finalWatchdog = setTimeout(() => {
+    if (ws) {
+      $("recState").textContent = "收口超时：服务可能过载，已有句子已保留在下方，请重新录音或刷新页面";
+      $("mDur").textContent = $("recTime").textContent;
+      if (liveSents.length) toastMsg("已保留 " + liveSents.length + " 句");
+      try { ws.close(); } catch (e) {}
+      ws = null;
+    }
+  }, 20000);
+}
+
+function onLiveMsg(ev) {
+  const m = JSON.parse(ev.data);
+  if (m.type === "sentence") {
+    liveSents.push(m);
+    removePartial();
+    appendSent(m, liveDiarize, false);
+    $("mCount").textContent = liveSents.length;
+    updateLiveMeta();
+  } else if (m.type === "partial") {
+    removePartial();
+    livePartialRow = appendSent(m, false, true);
+  } else if (m.type === "final") {
+    clearTimeout(finalWatchdog);
+    $("recState").textContent = `完成 · ${m.n_sentences} 句 · ${m.duration_s}s`;
+    if (m.project) { $("mProjPill").style.display = ""; $("mProj").textContent = m.project; }
+    loadProjects();
+    $("mDur").textContent = m.duration_s + "s";
+    if (m.n_speakers) { $("mSpkPill").style.display = ""; $("mSpk").textContent = m.n_speakers; }
+    $("dlTxt").href = m.downloads.txt;
+    $("dlSrt").href = m.downloads.srt;
+    $("dlTxt").classList.remove("disabled"); $("dlSrt").classList.remove("disabled");
+    lastResult = { diarize: liveDiarize, sentences: liveSents };
+    if (ws) { ws.close(); ws = null; }
+  } else if (m.type === "error") {
+    $("recState").textContent = "错误：" + m.message;
+  }
+}
+
+function updateLiveMeta() {
+  if (liveSents.length) {
+    $("mDur").textContent = Math.round(liveSents[liveSents.length - 1].end) + "s";
+  }
+  if (liveDiarize) {
+    const n = new Set(liveSents.map(s => s.speaker).filter(Boolean)).size;
+    if (n) { $("mSpkPill").style.display = ""; $("mSpk").textContent = n; }
+  }
+}
+
+function removePartial() {
+  if (livePartialRow) { livePartialRow.remove(); livePartialRow = null; }
+}
+
+function appendSent(s, diarize, partial) {
+  const box = $("sents");
+  const row = document.createElement("div");
+  row.className = "sent" + (partial ? " partial" : "");
+  const t = document.createElement("span"); t.className = "t"; t.textContent = fmtHMS(s.start);
+  row.appendChild(t);
+  if (diarize && s.speaker) {
+    const sp = document.createElement("span");
+    sp.className = "spk " + spkClass(s.speaker);
+    sp.textContent = s.speaker;
+    row.appendChild(sp);
+  }
+  const x = document.createElement("span"); x.className = "x"; x.textContent = s.text;
+  row.appendChild(x);
+  box.appendChild(row);
+  row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  return row;
+}
+
+function blobToB64(blob) {
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.readAsDataURL(blob);
+  });
+}
+
+// =====================================================
+//  文件上传模式
+// =====================================================
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => {
+  e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", () => { if (fileInput.files.length) upload(fileInput.files[0]); fileInput.value = ""; });
+
+async function upload(file) {
+  $("bar").style.display = "flex";
+  $("barName").textContent = file.name;
+  $("barPhase").textContent = "上传中…";
+  $("results").classList.remove("show");
+
+  const diarize = $("ckDiarize").checked;
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    $("barPhase").textContent = diarize ? "解码 + 转写 + 说话人分析中…" : "解码 + 转写中…";
+    const r = await fetch("/api/transcribe" + (diarize ? "?diarize=true" : ""), { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+    lastResult = j;
+    renderFile(j);
+    $("bar").style.display = "none";
+  } catch (e) {
+    $("barPhase").textContent = "失败：" + e.message;
+    setTimeout(() => { $("bar").style.display = "none"; }, 4000);
+  }
+}
+
+function renderFile(j) {
+  if (j.project) { $("mProjPill").style.display = ""; $("mProj").textContent = j.project; }
+  loadProjects();
+  $("mDur").textContent = j.duration_s + "s";
+  $("mInfer").textContent = j.infer_s + "s";
+  $("mRtfPill").style.display = "";
+  $("mRtf").textContent = (1 / Math.max(j.rtf, 0.001)).toFixed(0);
+  $("mCount").textContent = j.sentences.length;
+  $("dlTxt").href = j.downloads.txt;
+  $("dlSrt").href = j.downloads.srt;
+  $("dlTxt").classList.remove("disabled"); $("dlSrt").classList.remove("disabled");
+
+  if (j.diarize && j.n_speakers) {
+    $("mSpkPill").style.display = "";
+    $("mSpk").textContent = j.n_speakers;
+  } else {
+    $("mSpkPill").style.display = "none";
+  }
+
+  const box = $("sents");
+  box.innerHTML = "";
+  if (!j.sentences.length) {
+    box.innerHTML = '<div class="empty">未检测到语音内容</div>';
+  } else {
+    for (const s of j.sentences) appendSent(s, j.diarize, false);
+  }
+  $("results").classList.add("show");
+}
+
+// ---- 项目列表：展示 + 重命名 ----
+async function loadProjects() {
+  try {
+    const r = await fetch("/api/projects");
+    const j = await r.json();
+    const list = j.projects || [];
+    $("projects").style.display = list.length ? "" : "none";
+    $("projList").innerHTML = "";
+    for (const p of list) {
+      const row = document.createElement("div");
+      row.className = "proj-row";
+      const d = new Date(p.updated * 1000);
+      const pd = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      row.innerHTML = `<span class="pn">📁 ${p.name}</span><span class="pd">${p.n_files} 份 · ${pd}</span>`;
+      const btn = document.createElement("button");
+      btn.className = "btn"; btn.textContent = "重命名";
+      btn.addEventListener("click", async () => {
+        const nn = prompt("项目重命名为：", p.name);
+        if (!nn || !nn.trim() || nn.trim() === p.name) return;
+        const r2 = await fetch("/api/projects/rename", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ old: p.name, new: nn.trim() }),
+        });
+        const j2 = await r2.json();
+        if (r2.ok) { toastMsg("已重命名为「" + j2.name + "」"); loadProjects(); }
+        else toastMsg("重命名失败：" + (j2.detail || r2.status));
+      });
+      row.appendChild(btn);
+      $("projList").appendChild(row);
+    }
+  } catch (e) { /* 静默：列表失败不影响主流程 */ }
+}
+loadProjects();
+
+// ---- 复制全文（两种模式共用） ----
+$("btnCopy").addEventListener("click", async () => {
+  const sents = lastResult ? lastResult.sentences : liveSents;
+  if (!sents || !sents.length) return;
+  const dz = lastResult ? lastResult.diarize : liveDiarize;
+  const text = sents.map(s => {
+    const sp = (dz && s.speaker) ? s.speaker + ": " : "";
+    return `[${fmtHMS(s.start)}] ${sp}${s.text}`;
+  }).join("\n");
+  await navigator.clipboard.writeText(text);
+  toastMsg("已复制 " + sents.length + " 句");
+});
+</script>
+</body>
+</html>

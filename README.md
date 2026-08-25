@@ -27,6 +27,13 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **当前版本 / Version**：1.1.0
 - **发布日期 / Date**：2026-03-15
 
+#### scribe
+- **技能名称 / Name**：本地录音转写 / Local Audio Transcription
+- **技能描述 / Description**：音频/视频 → 带时间戳文字稿（TXT/SRT/JSON），可选说话人标记（CAM++）。常驻本地服务，**Agent 可自动调用**（上传转写 + 下载留存全自动闭环）。自包含跨平台：代码全在 skill 内，首次 setup.py 自动装依赖 + 下载模型 / Audio/video → timestamped transcript (TXT/SRT/JSON), optional speaker diarization (CAM++). Persistent local service with **full Agent automation** (upload → transcribe → download loop). Self-contained & cross-platform: all code in skill, setup.py installs deps + downloads models on first run
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-08-25
+- **安装 / Install**：`python3 scripts/setup.py`（跨平台：venv + funasr/torch + SenseVoice 模型 897MB，modelscope 国内源）；启动 `python3 scripts/start.py`；Agent 调用 `python3 scripts/scribe.py <音频> [--diarize]`
+
 ---
 
 ## 内容创作 / Content Creation
