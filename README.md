@@ -52,6 +52,16 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 
 ---
 
+## 技能管理 / Skill Management
+
+#### skills-hub
+- **技能名称 / Name**：技能市场管理器 / Skills Hub
+- **技能描述 / Description**：从 ClawHub 技能市场实时搜索、安装、更新技能——零依赖纯 HTTP，无需账号。每次搜索都是最新数据（无缓存架构），匿名下载安装，含来源溯源标记 / Live search, install, and update skills from the ClawHub marketplace. Zero dependencies, no account needed. Always-fresh results (no cache), anonymous download & install, origin tracking included.
+- **当前版本 / Version**：1.2.0
+- **发布日期 / Date**：2026-08-30
+
+---
+
 ## 数据采集 / Data Collection
 
 📊 **所有数据采集技能均包含可视化 HTML 报告功能**
