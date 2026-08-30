@@ -40,9 +40,9 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 
 #### style_fingerprint
 - **技能名称 / Name**：写作风格指纹 / Style Fingerprint
-- **技能描述 / Description**：分析并保存中文写作风格指纹，提取句法模式、词汇偏好、修辞特征，供AI写作助手使用 / Analyze and save Chinese writing style fingerprints, extracting syntax patterns, lexical preferences, and rhetorical features for AI writing agents
-- **当前版本 / Version**：1.0.0
-- **发布日期 / Date**：2026-03-17
+- **技能描述 / Description**：分析、校验、合并中文写作风格指纹，提取节奏、功能词习惯、句式修辞与范例句，供AI写作助手模仿与回归校验（v2 新增 compare 新稿偏差报告 / merge 多文本合并 / selftest 回归测试） / Analyze, compare and merge Chinese writing style fingerprints - rhythm, function-word habits, rhetoric patterns and exemplar sentences for AI writing agents (v2: compare deviation reports, multi-text merge, built-in regression tests)
+- **当前版本 / Version**：2.0.0
+- **发布日期 / Date**：2026-08-30
 
 #### weibo-publisher
 - **技能名称 / Name**：微博发布器 / Weibo Publisher
