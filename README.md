@@ -34,6 +34,15 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **发布日期 / Date**：2026-08-25
 - **安装 / Install**：`python3 scripts/setup.py`（跨平台：venv + funasr/torch + SenseVoice 模型 897MB，modelscope 国内源）；启动 `python3 scripts/start.py`；Agent 调用 `python3 scripts/scribe.py <音频> [--diarize]`
 
+#### geopulse
+- **技能名称 / Name**：自托管 AI 品牌可见性监测系统 / Self-hosted AI Brand Visibility Monitor (GEO)
+- **技能描述 / Description**：完整的 GEO（生成式引擎优化）监测系统，前后端自带、skill 内自包含。监测品牌在 AI 引擎回答中的可见率、声量份额、引用深度（提名/描述/推荐）、四维热力图（品牌词/场景词/对比词/选购词），一键导出可发客户的诊断报告。demo 引擎零 API Key 开箱即用，填任意 OpenAI 兼容端点（DeepSeek/智谱/通义/Kimi/OpenAI）即接入生产，数据全程留在本机 `~/.geopulse/` / Complete GEO (Generative Engine Optimization) monitoring system with bundled frontend & backend. Tracks brand visibility, share-of-voice, mention depth (named/described/recommended) and a 4-dimension heatmap, exports client-ready diagnostic reports. Works out-of-the-box with a zero-key demo engine; connect any OpenAI-compatible endpoint (DeepSeek/Zhipu/Qwen/Kimi/OpenAI) for production. All data stays local.
+- **当前版本 / Version**：1.2.0
+- **发布日期 / Date**：2026-09-07
+- **安装 / Install**：`pip3 install --user -r skills/geopulse/requirements.txt` 后 `python3 skills/geopulse/scripts/geopulse_ctl.py start`（首次自动建库+演示数据）；日常管理 `geopulse_ctl.py status/engine/brands/prompts/run/report`
+- **自检 / Self-test**：`python3 skills/geopulse/tests/test_integration.py`（36 项集成测试）
+- **浏览器**：`http://127.0.0.1:8700`（仪表盘 / Prompt 库 / 品牌与引擎）
+
 ---
 
 ## 内容创作 / Content Creation
