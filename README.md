@@ -59,6 +59,22 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **当前版本 / Version**：1.0.0
 - **发布日期 / Date**：2026-03-19
 
+#### glm-asr
+- **技能名称 / Name**：智谱语音转文本 / GLM-ASR Speech-to-Text
+- **技能描述 / Description**：智谱 GLM-ASR-2512 语音转文本 CLI。音频（wav/mp3，≤25MB，≤30秒）进，转录文本出，支持热词表（专有名词识别修正，实测"质朴→智谱"逐字修正）与上下文提示。模型/端点/API Key 全部 config.json 可换（Coding Plan 与普通端点双验证可用）。内置长音频 ffmpeg 切分指引、视频容器拦截（MP4 自动给抽音轨命令）、并发与大小限制指引 / Zhipu GLM-ASR-2512 speech-to-text CLI. Audio (wav/mp3, ≤25MB, ≤30s) in, transcript out, with hotwords (proper-noun correction), context prompt, config-swappable endpoint/model/key, long-audio ffmpeg splitting guide and MP4 video-container detection with audio-extraction hints
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-09-08
+- **安装 / Install**：填入你的智谱 API key 到 `skills/glm-asr/config.json`（或设环境变量 `GLM_ASR_API_KEY`），然后 `python3 skills/glm-asr/scripts/glm_asr.py audio.mp3 --hotwords "专有名词"`
+- **限制**：wav/mp3 only、≤25MB、≤30s、并发 ≤10（超限 429/1302）；MP4/视频先抽音轨（报错自带命令）
+
+#### minimax-av
+- **技能名称 / Name**：MiniMax 音视频理解 / MiniMax Audio-Video Understanding
+- **技能描述 / Description**：MiniMax 音视频理解 CLI，双子命令合一。`transcribe`：音频转文本（asr-1.0，支持 mp3/wav/m4a/aac/flac 等多格式，无 30 秒硬限制，响应自带音频时长）；`understand`：视频内容理解（MiniMax-M3 原生视频理解，mp4/mov/avi/mkv 等 ≤100MB，问答/摘要/JSON 结构化输出，自动剥离推理段）。模型/端点/API Key 全部 config.json 可换 / MiniMax audio-video understanding CLI with two subcommands. `transcribe`: audio-to-text (asr-1.0, multi-format, no 30s cap, duration in response). `understand`: video understanding (MiniMax-M3 native, ≤100MB, Q&A/summary/JSON output, auto strips reasoning). Config-swappable endpoint/model/key
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-09-08
+- **安装 / Install**：填入你的 MiniMax API key 到 `skills/minimax-av/config.json`（或设环境变量 `MINIMAX_API_KEY`），然后 `python3 skills/minimax-av/scripts/minimax_av.py transcribe audio.mp3` 或 `python3 skills/minimax-av/scripts/minimax_av.py understand video.mp4 --prompt "总结内容"`
+- **限制**：视频理解需 MiniMax-M3（其他模型收到视频"看不到"）；M3 推理占 max_tokens（默认 4096，空回答时调大）
+
 ---
 
 ## 技能管理 / Skill Management

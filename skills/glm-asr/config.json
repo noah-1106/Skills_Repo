@@ -1,0 +1,8 @@
+{
+  "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "model": "glm-asr-2512",
+  "api_key_env": "GLM_ASR_API_KEY",
+  "api_key": "",
+  "timeout_ms": 120000,
+  "_comment": "端点/模型/key 全部在此改，脚本不硬编码。api_key 优先读环境变量(api_key_env)，其次读本字段。备注：ASR 同时在普通端点 api/paas/v4 可用（同 key）。｜首次使用：填入你的 API key（或设置环境变量），勿提交真实 key 到任何仓库。"
+}
