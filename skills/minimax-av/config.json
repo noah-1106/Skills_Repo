@@ -7,5 +7,6 @@
   "timeout_asr_ms": 90000,
   "timeout_vision_ms": 300000,
   "max_video_bytes": 104857600,
-  "_comment": "端点/模型/key 全部在此改。key 为 MiniMax Token Plan 的 sk-cp- 开头 key。base_url 是中国站（api.minimaxi.com）；国际站为 api.minimax.io。｜首次使用：填入你的 API key（或设置环境变量），勿提交真实 key 到任何仓库。"
+  "_comment": "端点/模型/key 全部在此改。key 为 MiniMax Token Plan 的 sk-cp- 开头 key。base_url 是中国站（api.minimaxi.com）；国际站为 api.minimax.io。｜ASR 限制：≤50MB/≤500s；视频 ≤100MB（max_video_bytes）。",
+  "max_audio_bytes": 52428800
 }

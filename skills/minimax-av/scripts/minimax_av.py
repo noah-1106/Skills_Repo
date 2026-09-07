@@ -31,9 +31,9 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = SKILL_DIR / "config.json"
 
 AUDIO_EXTS = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
-              ".aac": "audio/aac", ".pcm": "audio/pcm", ".flac": "audio/flac",
-              ".ogg": "audio/ogg", ".opus": "audio/opus", ".amr": "audio/amr",
-              ".webm": "audio/webm"}
+              ".aac": "audio/aac", ".flac": "audio/flac",
+              ".ogg": "audio/ogg", ".opus": "audio/opus", ".aiff": "audio/aiff",
+              ".aif": "audio/aiff"}  # 官方列表：wav/aiff/flac/alac(m4a)/mp3/aac/opus/ogg；pcm 裸数据与 amr 不支持
 VIDEO_EXTS = {".mp4": "video/mp4", ".mov": "video/quicktime", ".avi": "video/x-msvideo",
               ".mkv": "video/x-matroska", ".webm": "video/webm", ".flv": "video/x-flv",
               ".wmv": "video/x-ms-wmv", ".mpeg": "video/mpeg", ".mpg": "video/mpeg"}
@@ -62,10 +62,12 @@ def sniff(path: Path) -> tuple:
         return "audio", "audio/flac"
     if head[:4] == b"OggS":
         return "audio", "audio/ogg"
-    if head[:4] == b"#!AMR":
-        return "audio", "audio/amr"
+    if head[:4] == b"FORM" and head[8:12] == b"AIFF":
+        return "audio", "audio/aiff"
     if head[4:8] == b"ftyp":
-        brand = head[8:12]
+        # MP4 容器：.m4a = 音频（alac/aac），.mp4/.mov 等 = 视频
+        if path.suffix.lower() in (".m4a", ".m4b"):
+            return "audio", "audio/mp4"
         return "video", "video/mp4"
     if head[:4] == b"RIFF":  # AVI
         return "video", "video/x-msvideo"
@@ -122,12 +124,13 @@ def strip_think(text: str) -> str:
 
 def do_transcribe(cfg: dict, args) -> str:
     audio_path = Path(args.media).expanduser()
-    mime = check_file(audio_path, "audio", 500 * 1024 * 1024)
+    mime = check_file(audio_path, "audio", cfg.get("max_audio_bytes", 50 * 1024 * 1024))
 
     boundary = "----mmasr" + uuid.uuid4().hex[:8]
     parts = [f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
              f'{cfg["asr_model"]}\r\n'.encode()]
-    parts.append(b'--' + boundary.encode() + b'\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n')
+    parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\n'
+                 f'{args.format}\r\n'.encode())
     parts.append(b'--' + boundary.encode() + b'\r\nContent-Disposition: form-data; name="stream"\r\n\r\nfalse\r\n')
     parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
                  f'filename="{audio_path.name}"\r\nContent-Type: {mime}\r\n\r\n'.encode())
@@ -135,10 +138,57 @@ def do_transcribe(cfg: dict, args) -> str:
     parts.append(f"\r\n--{boundary}--\r\n".encode())
 
     url = cfg["base_url"].rstrip("/") + "/speech_to_text"
-    resp = http_post(url, b"".join(parts),
-                     {"Content-Type": f"multipart/form-data; boundary={boundary}",
-                      "Authorization": f"Bearer {cfg['api_key']}"},
-                     cfg.get("timeout_asr_ms", 90000) // 1000)
+    headers = {"Content-Type": f"multipart/form-data; boundary={boundary}",
+               "Authorization": f"Bearer {cfg['api_key']}"}
+    timeout = cfg.get("timeout_asr_ms", 90000) // 1000
+    req = urllib.request.Request(url, data=b"".join(parts), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode("utf-8", "replace")[:300]
+        except Exception:
+            pass
+        if e.code == 401:
+            raise SystemExit("[minimax-av] 401: API Key 无效（检查 config.json / MINIMAX_API_KEY）")
+        if e.code == 400:
+            raise SystemExit(f"[minimax-av] 400: {detail}（常见原因：音频超 500 秒 / 格式不支持——官方不截断超长音频，直接拒绝）")
+        if e.code == 413:
+            raise SystemExit(f"[minimax-av] 413: 文件超 50MB——压缩或转码：ffmpeg -i in -b:a 64k out.mp3")
+        if e.code == 429:
+            raise SystemExit("[minimax-av] 429: 限流（并发勿超 10）——退避重试")
+        raise SystemExit(f"[minimax-av] HTTP {e.code}: {detail}")
+    except urllib.error.URLError as e:
+        raise SystemExit(f"[minimax-av] 网络失败: {e.reason}")
+
+    if args.format in ("srt", "vtt"):
+        # 字幕格式：响应体就是 text/plain
+        text = raw.strip()
+        if not text:
+            raise SystemExit("[minimax-av] 转录为空")
+        if args.out:
+            Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
+            print(f"字幕完成 → {args.out}", file=sys.stderr)
+        print(text)
+        return
+
+    resp = json.loads(raw)
+    if args.format == "verbose_json":
+        # 人读格式化：说话人 + 句级时间戳
+        segs = resp.get("segments") or []
+        lines = [f"说话人数: {resp.get('n_speakers', '?')} | 时长: {resp.get('duration', '?')}s"]
+        for s in segs:
+            lines.append(f"[{s.get('speaker', '?')}] {s.get('start', 0):.2f}s-{s.get('end', 0):.2f}s  {s.get('text', '')}")
+        text = "\n".join(lines)
+        if not segs:
+            text = resp.get("text", "") or text
+        if args.out:
+            Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
+            print(f"转录完成 → {args.out}", file=sys.stderr)
+        print(text)
+        return
 
     text = (resp.get("text") or "").strip()
     if not text:
@@ -204,7 +254,9 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     ap_t = sub.add_parser("transcribe", help="音频转文本（asr-1.0）")
-    ap_t.add_argument("media", help="音频文件")
+    ap_t.add_argument("media", help="音频文件（wav/aiff/flac/m4a/mp3/aac/opus/ogg，≤50MB，≤500秒）")
+    ap_t.add_argument("--format", choices=["json", "verbose_json", "srt", "vtt"], default="json",
+                      help="输出格式：json=纯文本；verbose_json=带说话人与句级时间戳；srt/vtt=字幕（不可与流式同用）")
     ap_t.add_argument("--out", help="保存到文件")
     ap_t.add_argument("--show-usage", action="store_true")
 
