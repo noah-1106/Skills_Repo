@@ -34,6 +34,14 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **发布日期 / Date**：2026-08-25
 - **安装 / Install**：`python3 scripts/setup.py`（跨平台：venv + funasr/torch + SenseVoice 模型 897MB，modelscope 国内源）；启动 `python3 scripts/start.py`；Agent 调用 `python3 scripts/scribe.py <音频> [--diarize]`
 
+#### glm-vision
+- **技能名称 / Name**：智谱视觉理解 / GLM Vision Understanding (Image + Video)
+- **技能描述 / Description**：智谱 GLM-5.3-flash 视觉理解 CLI。图片（本地路径自动转 Base64 / URL 直传 / 多图对比）+ 视频（本地自动转 Base64 / URL 直传）进，文字或 JSON 分析出。支持 OCR 式文字提取、图表解读、截图理解、多图对比。模型、端点、API Key 全部 config.json 可换（Coding Plan 与标准端点均可用）。国外图片 URL 拉取失败时 `--download` 自动降级本地转 Base64 / Zhipu GLM-5.3-flash vision CLI. Images (local auto-Base64 / URL / multi-image compare) + videos (local auto-Base64 / URL) in, text or JSON analysis out. OCR extraction, chart reading, screenshot understanding, multi-image compare. Model/endpoint/key all config-swappable (both Coding Plan & standard endpoint verified). `--download` fallback converts foreign URLs to Base64 locally when server-side fetch fails
+- **当前版本 / Version**：1.2.0
+- **发布日期 / Date**：2026-09-08
+- **安装 / Install**：填入你的智谱 API key 到 `skills/glm-vision/config.json`（或设环境变量 `GLM_VISION_API_KEY`），然后 `python3 skills/glm-vision/scripts/glm_vision.py image.jpg --prompt "描述内容"` 或 `python3 skills/glm-vision/scripts/glm_vision.py video.mp4 --json --prompt "..."`；多图：`glm_vision.py img1.jpg img2.png --prompt "对比"`
+- **限制**：图片 ≤10MB；视频 ≤50MB；国外 URL 源智谱服务端拉取易失败（加 `--download` 本地下载绕过）；并发约 5 QPS；空回答时加大 --max-tokens（推理占额）
+
 #### geopulse
 - **技能名称 / Name**：自托管 AI 品牌可见性监测系统 / Self-hosted AI Brand Visibility Monitor (GEO)
 - **技能描述 / Description**：完整的 GEO（生成式引擎优化）监测系统，前后端自带、skill 内自包含。监测品牌在 AI 引擎回答中的可见率、声量份额、引用深度（提名/描述/推荐）、四维热力图（品牌词/场景词/对比词/选购词），一键导出可发客户的诊断报告。demo 引擎零 API Key 开箱即用，填任意 OpenAI 兼容端点（DeepSeek/智谱/通义/Kimi/OpenAI）即接入生产，数据全程留在本机 `~/.geopulse/` / Complete GEO (Generative Engine Optimization) monitoring system with bundled frontend & backend. Tracks brand visibility, share-of-voice, mention depth (named/described/recommended) and a 4-dimension heatmap, exports client-ready diagnostic reports. Works out-of-the-box with a zero-key demo engine; connect any OpenAI-compatible endpoint (DeepSeek/Zhipu/Qwen/Kimi/OpenAI) for production. All data stays local.
