@@ -68,12 +68,12 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **限制**：wav/mp3 only、≤25MB、≤30s、并发 ≤10（超限 429/1302）；MP4/视频先抽音轨（报错自带命令）
 
 #### minimax-av
-- **技能名称 / Name**：MiniMax 音视频理解 / MiniMax Audio-Video Understanding
-- **技能描述 / Description**：MiniMax 音视频理解 CLI，双子命令合一。`transcribe`：音频转文本（asr-1.0，支持 mp3/wav/m4a/aac/flac 等多格式，无 30 秒硬限制，响应自带音频时长）；`understand`：视频内容理解（MiniMax-M3 原生视频理解，mp4/mov/avi/mkv 等 ≤100MB，问答/摘要/JSON 结构化输出，自动剥离推理段）。模型/端点/API Key 全部 config.json 可换 / MiniMax audio-video understanding CLI with two subcommands. `transcribe`: audio-to-text (asr-1.0, multi-format, no 30s cap, duration in response). `understand`: video understanding (MiniMax-M3 native, ≤100MB, Q&A/summary/JSON output, auto strips reasoning). Config-swappable endpoint/model/key
-- **当前版本 / Version**：1.0.0
+- **技能名称 / Name**：MiniMax 全模态理解 / MiniMax Multimodal Understanding (Audio + Vision)
+- **技能描述 / Description**：MiniMax 全模态理解 CLI，双子命令合一。`transcribe`：音频转文本（asr-1.0，支持 wav/aiff/flac/m4a/mp3/aac/opus/ogg，≤50MB/≤500 秒，**支持 SRT/VTT 字幕与 verbose_json 说话人分离时间戳**）；`understand`：视觉理解（MiniMax-M3 原生，**视频 mp4/mov 等 + 图片 png/jpg/webp/gif 可混合多文件**，≤100MB，问答/摘要/JSON 结构化输出，自动剥离推理段）。模型/端点/API Key 全部 config.json 可换 / MiniMax multimodal understanding CLI with two subcommands. `transcribe`: audio-to-text (asr-1.0, 8 formats ≤50MB/≤500s, SRT/VTT subtitles & verbose_json speaker-diarization timestamps). `understand`: vision (MiniMax-M3 native, videos + images mixed multi-file ≤100MB, Q&A/summary/JSON, auto strips reasoning). Config-swappable endpoint/model/key
+- **当前版本 / Version**：1.2.0
 - **发布日期 / Date**：2026-09-08
-- **安装 / Install**：填入你的 MiniMax API key 到 `skills/minimax-av/config.json`（或设环境变量 `MINIMAX_API_KEY`），然后 `python3 skills/minimax-av/scripts/minimax_av.py transcribe audio.mp3` 或 `python3 skills/minimax-av/scripts/minimax_av.py understand video.mp4 --prompt "总结内容"`
-- **限制**：视频理解需 MiniMax-M3（其他模型收到视频"看不到"）；M3 推理占 max_tokens（默认 4096，空回答时调大）
+- **安装 / Install**：填入你的 MiniMax API key 到 `skills/minimax-av/config.json`（或设环境变量 `MINIMAX_API_KEY`），然后 `python3 skills/minimax-av/scripts/minimax_av.py transcribe audio.mp3 --format srt` 或 `python3 skills/minimax-av/scripts/minimax_av.py understand video.mp4 cover.png --prompt "总结内容"`
+- **限制**：ASR ≤50MB/≤500 秒（超长直接拒）；视频理解需 MiniMax-M3（其他模型收到视频"看不到"）；M3 推理占 max_tokens（默认 4096，空回答时调大）；图片 >2MB 建议先缩放
 
 ---
 
