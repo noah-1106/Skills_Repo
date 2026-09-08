@@ -1,0 +1,11 @@
+{
+  "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "model": "glm-5.3-flash",
+  "api_key_env": "GLM_VISION_API_KEY",
+  "api_key": "",
+  "timeout_ms": 120000,
+  "max_tokens": 4096,
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "_comment": "模型/端点/key 全部在此改，脚本不硬编码。api_key 优先读环境变量(api_key_env)，其次读本字段。"
+}
