@@ -80,7 +80,7 @@ def _safe_name(name: str) -> str:
     return name or "未命名"
 
 
-def _job_basename(project: str) -> str:
+def _job_basename() -> str:
     """同一项目内产物命名：毫秒时间戳保证多次录音各自独立、按时间排序。"""
     return str(int(time.time() * 1000))
 PORT = int(os.environ.get("SCRIBE_PORT", "8399"))
@@ -255,7 +255,7 @@ async def api_transcribe(file: UploadFile = File(...),
 
         duration = src_duration or (sentences[-1]["end"] if sentences else 0)
         project = Path(file.filename or "audio").stem  # 上传模式：文件名即项目名
-        base_name = _job_basename(project)
+        base_name = _job_basename()
         _save_outputs(base_name, file.filename or "audio", duration, sentences, diarize, project)
 
         n_speakers = len({s.get("speaker") for s in sentences if s.get("speaker")}) if diarize else 0
@@ -305,7 +305,12 @@ def _save_outputs(base_name, source, duration, sentences, diarize, project="未�
 def download(name: str):
     """支持 <项目名>/<文件> 两层路径；旧平铺文件仍可直接按文件名下载。"""
     p = (OUT_DIR / name).resolve()
-    if not str(p).startswith(str(OUT_DIR.resolve())) or not p.exists() or p.is_dir():
+    # 严格归属校验：startswith 前缀匹配会被 outputs_evil 这类同前缀兄弟目录绕过
+    try:
+        p.relative_to(OUT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(404, "文件不存在")
+    if not p.exists() or p.is_dir():
         raise HTTPException(404, "文件不存在")
     from fastapi.responses import FileResponse
     return FileResponse(p, filename=p.name)
@@ -366,6 +371,13 @@ async def ws_live(ws: WebSocket):
             t = msg.get("type")
             try:
                 if t == "start":
+                    # 重复 start = 重置会话：先关掉旧会话的持久 ffmpeg，
+                    # 否则旧解码进程和两个泵线程会悬存到 WS 断开
+                    if sess is not None:
+                        try:
+                            sess.decoder.close()
+                        except Exception:
+                            pass
                     sess = LiveSession(State.asr, State.vad,
                                        bool(msg.get("diarize")), _load_sv)
                     sess.project = (msg.get("project") or "").strip() or (
@@ -393,9 +405,10 @@ async def ws_live(ws: WebSocket):
                 elif t == "force_flush" and sess:
                     # 前端超时兜底：用户停顿了但 VAD 因短促停顿迟迟不报闭合，
                     # 直接冲掉驻留段当定稿句（给用户「停顿就断句」的体验）。
-                    for seg in sess.drain():
-                        _emit(seg)
-                    p = sess.vadstream.flush_partial()
+                    with State.lock:
+                        for seg in sess.drain():
+                            _emit(seg)
+                        p = sess.vadstream.flush_partial()
                     if p and p["end"] - p["start"] > 0.3:
                         with State.lock:
                             sent = sess.recognize(p["start"], p["end"])
@@ -431,7 +444,7 @@ async def ws_live(ws: WebSocket):
     def _finish():
         duration = sess.wav.size / 16000.0 if sess.wav.size else 0.0
         project = getattr(sess, "project", None) or "未命名"
-        base_name = _job_basename(project)
+        base_name = _job_basename()
         _save_outputs(base_name, "live-recording", duration,
                       sess.sentences, sess.diarize, project)
         n_spk = len({s.get("speaker") for s in sess.sentences if s.get("speaker")})

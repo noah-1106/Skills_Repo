@@ -29,6 +29,7 @@
     但还没进 VAD 的采样，避免 partial 滞后一个块。
   - 整段上传转写（transcribe.py）不受影响，两种模式并存。
 """
+import logging
 import os
 import shutil
 import subprocess
@@ -37,6 +38,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+
+log = logging.getLogger("scribe")
 
 BASE = Path(__file__).resolve().parent
 FFMPEG = BASE / "bin" / "ffmpeg"
@@ -155,6 +158,9 @@ class VadStream:
                 disable_pbar=True)
             return res[0]["value"] if res and res[0].get("value") else []
         except Exception:
+            # 不能静默吞：本批采样被跳过时 offset_ms 仍照常累加，
+            # 段边界会漂移——必须留日志，否则出问题无从排查
+            log.exception("VAD 流式推理失败，本批 %d 采样被跳过（段边界可能漂移）", chunk.size)
             return []
 
     def feed(self, samples: np.ndarray):
