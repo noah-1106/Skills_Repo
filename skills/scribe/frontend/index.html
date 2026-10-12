@@ -171,9 +171,24 @@
     background: var(--bg-soft); border: 1px solid var(--border); border-radius: 10px;
     padding: 9px 14px; margin-bottom: 6px;
   }
-  .proj-row .pn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-row .pn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    cursor: pointer; }
+  .proj-row .pn:hover { color: var(--accent); }
   .proj-row .pd { color: #55555f; font-size: 12px; font-family: var(--mono); }
   .proj-row .btn { padding: 3px 10px; font-size: 12px; }
+  .proj-files {
+    margin: -4px 0 6px; padding: 4px 8px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  }
+  .pf-item {
+    display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+    font-size: 12.5px; color: var(--text-dim); text-decoration: none; border-radius: 7px;
+  }
+  .pf-item:hover { background: #1b1b26; color: var(--text); }
+  .pf-ext { font-family: var(--mono); font-size: 11px; color: var(--accent); width: 34px; flex-shrink: 0; }
+  .pf-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+  .pf-size { color: #55555f; font-size: 12px; }
+  .pf-loading { padding: 8px; color: var(--text-dim); font-size: 12.5px; }
   .empty { text-align: center; color: var(--text-dim); padding: 40px; font-size: 14px; }
   .toast {
     position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -269,23 +284,37 @@
 const $ = id => document.getElementById(id);
 const drop = $("drop"), fileInput = $("fileInput");
 let lastResult = null;
+// 当前结果区对应的项目与下载路径：项目重命名后要同步更新，否则旧链接 404
+let currentProject = "", dlPaths = null;
+// 项目名是否为自动生成（final 后清空，避免下次录音悄悄并入上次项目）
+let projAuto = false;
 
 // ---- 健康检查 ----
+let healthFails = 0;
 async function checkHealth() {
   try {
     const r = await fetch("/api/health");
     const j = await r.json();
+    healthFails = 0;
     if (j.ok) {
       $("dot").className = "dot ok";
       $("statusText").textContent = `就绪 · 模型已常驻（加载 ${j.model_load_seconds}s）· 解码器 ${j.decoder}`;
+      // 就绪后也慢速轮询：服务崩溃/重启时状态灯不失真，恢复后页面自愈
+      setTimeout(checkHealth, 5000);
     } else {
       $("dot").className = "dot warn";
       $("statusText").textContent = "模型加载中…";
       setTimeout(checkHealth, 2000);
     }
   } catch (e) {
+    // 启动早期模型加载期间端口尚未监听，连接会被拒——持续重试自愈，
+    // 只有长时间（~30s）连不上才判定服务真没启动
+    healthFails++;
     $("dot").className = "dot warn";
-    $("statusText").textContent = "服务未启动：运行 ./start.sh";
+    $("statusText").textContent = healthFails < 15
+      ? "正在连接服务（模型加载中，首次约 15 秒）…"
+      : "服务未启动：运行 ./start.sh";
+    setTimeout(checkHealth, 2000);
   }
 }
 checkHealth();
@@ -335,13 +364,15 @@ function autoProjectName() {
   const p = n => String(n).padStart(2, "0");
   return `录音 ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+// 用户手动改过项目名 → 不再是自动生成态，final 后保留不清
+$("projName").addEventListener("input", () => { projAuto = false; });
 
 async function startRecording() {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     // 项目名：用户没填就自动生成并回填到输入框（录音中/结束后都可改，
     // 改名在下方「已保存项目」里进行，落盘名以开始录音时为准）。
-    if (!$("projName").value.trim()) $("projName").value = autoProjectName();
+    if (!$("projName").value.trim()) { $("projName").value = autoProjectName(); projAuto = true; }
     liveProject = $("projName").value.trim();
     // 归零状态
     clearTimeout(finalWatchdog);
@@ -457,14 +488,17 @@ function onLiveMsg(ev) {
   } else if (m.type === "final") {
     clearTimeout(finalWatchdog);
     $("recState").textContent = `完成 · ${m.n_sentences} 句 · ${m.duration_s}s`;
-    if (m.project) { $("mProjPill").style.display = ""; $("mProj").textContent = m.project; }
+    if (m.project) { $("mProjPill").style.display = ""; $("mProj").textContent = m.project; currentProject = m.project; }
     loadProjects();
     $("mDur").textContent = m.duration_s + "s";
     if (m.n_speakers) { $("mSpkPill").style.display = ""; $("mSpk").textContent = m.n_speakers; }
-    $("dlTxt").href = m.downloads.txt;
-    $("dlSrt").href = m.downloads.srt;
+    dlPaths = m.downloads;
+    $("dlTxt").href = dlPaths.txt;
+    $("dlSrt").href = dlPaths.srt;
     $("dlTxt").classList.remove("disabled"); $("dlSrt").classList.remove("disabled");
     lastResult = { diarize: liveDiarize, sentences: liveSents };
+    // 自动生成的项目名用完即清：下一次录音应起新项目，而不是悄悄并入这一次
+    if (projAuto) { $("projName").value = ""; projAuto = false; }
     if (ws) { ws.close(); ws = null; }
   } else if (m.type === "error") {
     $("recState").textContent = "错误：" + m.message;
@@ -548,15 +582,16 @@ async function upload(file) {
 }
 
 function renderFile(j) {
-  if (j.project) { $("mProjPill").style.display = ""; $("mProj").textContent = j.project; }
+  if (j.project) { $("mProjPill").style.display = ""; $("mProj").textContent = j.project; currentProject = j.project; }
   loadProjects();
   $("mDur").textContent = j.duration_s + "s";
   $("mInfer").textContent = j.infer_s + "s";
   $("mRtfPill").style.display = "";
   $("mRtf").textContent = (1 / Math.max(j.rtf, 0.001)).toFixed(0);
   $("mCount").textContent = j.sentences.length;
-  $("dlTxt").href = j.downloads.txt;
-  $("dlSrt").href = j.downloads.srt;
+  dlPaths = j.downloads;
+  $("dlTxt").href = dlPaths.txt;
+  $("dlSrt").href = dlPaths.srt;
   $("dlTxt").classList.remove("disabled"); $("dlSrt").classList.remove("disabled");
 
   if (j.diarize && j.n_speakers) {
@@ -590,6 +625,8 @@ async function loadProjects() {
       const d = new Date(p.updated * 1000);
       const pd = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       row.innerHTML = `<span class="pn">📁 ${p.name}</span><span class="pd">${p.n_files} 份 · ${pd}</span>`;
+      // 点项目名展开/收起产物文件列表（可下载）
+      row.querySelector(".pn").addEventListener("click", () => toggleFiles(p.name, row));
       const btn = document.createElement("button");
       btn.className = "btn"; btn.textContent = "重命名";
       btn.addEventListener("click", async () => {
@@ -600,15 +637,85 @@ async function loadProjects() {
           body: JSON.stringify({ old: p.name, new: nn.trim() }),
         });
         const j2 = await r2.json();
-        if (r2.ok) { toastMsg("已重命名为「" + j2.name + "」"); loadProjects(); }
+        if (r2.ok) {
+          toastMsg("已重命名为「" + j2.name + "」");
+          // 结果区若正展示被改名的项目，同步 pill 与下载链接（目录已改名，旧链接会 404）
+          if (currentProject === p.name) {
+            currentProject = j2.name;
+            $("mProj").textContent = j2.name;
+            if (dlPaths) {
+              for (const k of ["txt", "srt"]) {
+                dlPaths[k] = dlPaths[k].replace(/^\/api\/download\/[^/]+\//, "/api/download/" + j2.name + "/");
+              }
+              $("dlTxt").href = dlPaths.txt;
+              $("dlSrt").href = dlPaths.srt;
+            }
+          }
+          loadProjects();
+        }
         else toastMsg("重命名失败：" + (j2.detail || r2.status));
       });
       row.appendChild(btn);
+      const del = document.createElement("button");
+      del.className = "btn"; del.textContent = "删除";
+      del.addEventListener("click", async () => {
+        if (!confirm(`删除项目「${p.name}」及其全部 ${p.n_files} 份转写？此操作不可恢复。`)) return;
+        const r3 = await fetch("/api/projects/" + encodeURIComponent(p.name), { method: "DELETE" });
+        if (r3.ok) { toastMsg("已删除「" + p.name + "」"); loadProjects(); }
+        else {
+          let msg = r3.status;
+          try { msg = (await r3.json()).detail || msg; } catch (e) {}
+          toastMsg("删除失败：" + msg);
+        }
+      });
+      row.appendChild(del);
       $("projList").appendChild(row);
     }
   } catch (e) { /* 静默：列表失败不影响主流程 */ }
 }
 loadProjects();
+
+// ---- 项目展开：查看/下载历史产物 ----
+async function toggleFiles(name, row) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("proj-files")) { next.remove(); return; }
+  const box = document.createElement("div");
+  box.className = "proj-files";
+  box.innerHTML = '<div class="pf-loading">加载中…</div>';
+  row.after(box);
+  try {
+    const r = await fetch("/api/projects/" + encodeURIComponent(name) + "/files");
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status));
+    box.innerHTML = "";
+    if (!j.files.length) {
+      box.innerHTML = '<div class="pf-loading">（暂无产物）</div>';
+      return;
+    }
+    for (const f of j.files) {
+      const a = document.createElement("a");
+      a.className = "pf-item"; a.href = f.url;
+      const ext = document.createElement("span");
+      ext.className = "pf-ext";
+      ext.textContent = (f.name.split(".").pop() || "").toUpperCase();
+      const nm = document.createElement("span");
+      nm.className = "pf-name"; nm.textContent = f.name;
+      const sz = document.createElement("span");
+      sz.className = "pf-size";
+      sz.textContent = f.bytes > 1048576
+        ? (f.bytes / 1048576).toFixed(1) + " MB"
+        : Math.max(1, Math.round(f.bytes / 1024)) + " KB";
+      a.append(ext, nm, sz);
+      box.appendChild(a);
+    }
+  } catch (e) {
+    box.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "pf-loading";
+    err.textContent = "加载失败：" + e.message;
+    box.appendChild(err);
+  }
+}
 
 // ---- 复制全文（两种模式共用） ----
 $("btnCopy").addEventListener("click", async () => {

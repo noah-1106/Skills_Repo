@@ -206,8 +206,9 @@ def _render_sent(s: dict, diarize: bool) -> str:
 
 @app.post("/api/transcribe")
 async def api_transcribe(file: UploadFile = File(...),
-                          diarize: str = Query("false", description="说话人标记: true/false")):
+                         diarize: str = Query("false", description="说话人标记: true/false")):
     # 宽松解析: 兼容 "true"/"1"/"yes"/"on" 各种客户端传法
+    # （bool 类型声明遇到 "yes" 这类值会直接 422，拒绝太硬）
     diarize = str(diarize).lower() in ("1", "true", "yes", "on")
     if State.asr is None:
         raise HTTPException(503, "模型仍在加载，稍后重试")
@@ -382,6 +383,8 @@ async def ws_live(ws: WebSocket):
                                        bool(msg.get("diarize")), _load_sv)
                     sess.project = (msg.get("project") or "").strip() or (
                         "录音 " + time.strftime("%m-%d %H:%M"))
+                    # 会话开始即定档文件名：之后每闭合一句立即追加落盘
+                    sess.base_name = _job_basename()
                     asyncio.run_coroutine_threadsafe(send({"type": "ready"}), loop)
                 elif t == "block" and sess:
                     with State.lock:
@@ -414,6 +417,7 @@ async def ws_live(ws: WebSocket):
                             sent = sess.recognize(p["start"], p["end"])
                         if sent:
                             sess.sentences.append(sent)
+                            _persist_sent(sess, sent)
                             asyncio.run_coroutine_threadsafe(
                                 send({"type": "sentence", **sent}), loop)
                     sess.vadstream.in_progress = None
@@ -434,17 +438,31 @@ async def ws_live(ws: WebSocket):
                 asyncio.run_coroutine_threadsafe(
                     send({"type": "error", "message": str(e)[:200]}), loop)
 
+    def _persist_sent(sess, sent):
+        """每闭合一句立即追加到 outputs/<项目>/<ts>.txt —— 实时模式逐句持久化，
+        崩溃/断电/误杀进程时已转内容不丢（磁盘上最多差一个未闭合的驻留段）。
+        stop/断线兜底会再以同文件名写全量 txt/srt/json，内容与逐句追加一致。"""
+        try:
+            pdir = OUT_DIR / _safe_name(getattr(sess, "project", None) or "未命名")
+            pdir.mkdir(parents=True, exist_ok=True)
+            with open(pdir / f"{sess.base_name}.txt", "a", encoding="utf-8") as f:
+                f.write(_render_sent(sent, sess.diarize) + "\n")
+        except Exception:
+            log.exception("实时落盘失败（转写继续，内存中仍有副本）")
+
     def _emit(seg):
         sent = sess.recognize(seg["start"], seg["end"])
         if sent:
             sess.sentences.append(sent)
+            _persist_sent(sess, sent)
             asyncio.run_coroutine_threadsafe(
                 send({"type": "sentence", **sent}), loop)
 
     def _finish():
+        sess.finished = True  # 标记已落盘，断线兜底不再重复保存
         duration = sess.wav.size / 16000.0 if sess.wav.size else 0.0
         project = getattr(sess, "project", None) or "未命名"
-        base_name = _job_basename()
+        base_name = getattr(sess, "base_name", None) or _job_basename()
         _save_outputs(base_name, "live-recording", duration,
                       sess.sentences, sess.diarize, project)
         n_spk = len({s.get("speaker") for s in sess.sentences if s.get("speaker")})
@@ -474,9 +492,34 @@ async def ws_live(ws: WebSocket):
                 sess.decoder.close()
             except Exception:
                 pass
+            # 断线兜底：浏览器关页/断网导致 WS 断开时，已转出的句子仍然落盘，
+            # 否则整段录音白录（stop 正常走完的会话已由 _finish 标记，不重复保存）
+            if sess.sentences and not getattr(sess, "finished", False):
+                try:
+                    duration = sess.wav.size / 16000.0 if sess.wav.size else 0.0
+                    project = getattr(sess, "project", None) or "未命名"
+                    _save_outputs(getattr(sess, "base_name", None) or _job_basename(),
+                                  "live-recording(断线兜底)",
+                                  duration, sess.sentences, sess.diarize, project)
+                    log.info("WS 断线兜底落盘：%s（%d 句）", _safe_name(project),
+                             len(sess.sentences))
+                except Exception:
+                    log.exception("断线兜底落盘失败")
 
 
-# ---------- 项目管理：列表 / 重命名 ----------
+# ---------- 项目管理：列表 / 文件 / 重命名 / 删除 ----------
+
+
+def _project_dir(name: str) -> Path:
+    """项目名 → 目录（严格归属校验，防路径穿越）。"""
+    pdir = (OUT_DIR / _safe_name(name)).resolve()
+    try:
+        pdir.relative_to(OUT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(404, "项目不存在")
+    if not pdir.is_dir():
+        raise HTTPException(404, "项目不存在")
+    return pdir
 
 @app.get("/api/projects")
 def list_projects():
@@ -512,6 +555,29 @@ async def rename_project(payload: dict):
         n += 1
     src.rename(dst)
     return {"ok": True, "name": dst.name}
+
+
+@app.get("/api/projects/{name}/files")
+def project_files(name: str):
+    """项目内产物列表（txt/srt/json），供前端展开查看与下载。"""
+    pdir = _project_dir(name)
+    files = []
+    for f in sorted(pdir.iterdir(), key=lambda x: -x.stat().st_mtime):
+        if not f.is_file() or f.name == "meta.json":
+            continue
+        st = f.stat()
+        files.append({"name": f.name, "bytes": st.st_size,
+                      "mtime": int(st.st_mtime),
+                      "url": f"/api/download/{pdir.name}/{f.name}"})
+    return {"project": pdir.name, "files": files}
+
+
+@app.delete("/api/projects/{name}")
+def delete_project(name: str):
+    """删除项目 = 整个目录删除（含全部产物）。前端有 confirm，不可逆。"""
+    pdir = _project_dir(name)
+    shutil.rmtree(pdir)
+    return {"ok": True}
 
 
 # ---------- 前端：静态挂载（含 SPA 入口） ----------

@@ -54,6 +54,8 @@ GET  /api/health         # 服务状态（ok/base_dir/disk_free_gb/模型信息�
 POST /api/transcribe     # multipart: file=音频; query: ?diarize=true（说话人标记）
 GET  /api/download/{项目}/{文件}.txt|srt|json   # 下载产物
 GET  /api/projects       # 历史转写项目
+GET  /api/projects/{项目}/files   # 项目产物列表
+DELETE /api/projects/{项目}       # 删除项目（不可恢复）
 WS   /ws/live            # 实时录音转写（浏览器用）
 ```
 
@@ -78,6 +80,7 @@ python3 scripts/setup.py
 3. **diarize 是 query 参数**（?diarize=true），不是 form 字段（FastAPI 坑，已踩）
 4. **产物三格式**：TXT（带时间戳句子）/ SRT（字幕）/ JSON（结构化 sentences 含起止秒）
 5. **转写质量**：SenseVoice 中文强；英文词偶发不准（"AI"→"爱"）——重要英文术语建议画面/人工校对
+6. **实时录音逐句落盘**：每闭合一句立即追加写入项目目录 txt，崩溃/断电/关页不丢已转内容（断线再兜底补全量 srt/json）
 
 ## 已知坑（详见 references/已知坑.md）
 
