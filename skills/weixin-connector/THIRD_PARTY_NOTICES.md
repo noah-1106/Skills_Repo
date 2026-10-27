@@ -1,0 +1,2 @@
+# Third-party notices
+Protocol behavior and request structures are derived from Tencent `openclaw-weixin` (MIT), https://github.com/Tencent/openclaw-weixin, reviewed at commit 874637a0dbc24050f72d1385add4fc6170a2d726 and npm 2.4.10. Tencent copyright and permission notice are preserved in UPSTREAM-LICENSE. This connector is not an official Tencent or Weixin ExFlower product; no endorsement is implied.

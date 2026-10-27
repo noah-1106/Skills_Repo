@@ -51,6 +51,15 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **自检 / Self-test**：`python3 skills/geopulse/tests/test_integration.py`（36 项集成测试）
 - **浏览器**：`http://127.0.0.1:8700`（仪表盘 / Prompt 库 / 品牌与引擎）
 
+#### weixin-connector
+- **技能名称 / Name**：ExFlower 微信连接器 / Weixin Connector for ExFlower
+- **技能描述 / Description**：把个人微信私聊文字路由给指定 ExFlower Agent，并将最终回复送回微信。支持扫码登录、`@Agent别名` 精确路由与切换、同一联系人与同一 Agent 的最近 12 轮上下文、后台接收、断点恢复和长回复分片。CLI、源码、依赖锁与离线测试均随 Skill 提供 / Routes personal WeChat private-chat text to selected ExFlower Agents and sends final replies back. Includes QR login, exact `@Agent` routing and switching, 12-turn per-contact/per-Agent history, background receiving, recovery and long-reply chunking. CLI, source, locked dependencies and offline tests are bundled
+- **当前版本 / Version**：0.2.0
+- **发布日期 / Date**：2026-10-27
+- **安装 / Install**：复制 `skills/weixin-connector` 到 `~/.exflower/skills/weixin-connector`，进入目录执行 `npm ci --ignore-scripts`，再用 `node bin/exf-weixin.js doctor --json` 自检。要求 Node.js >=22.13 和正在运行的 ExFlower；扫码与后台启动方法见 [Skill 说明](skills/weixin-connector/SKILL.md)
+- **验证 / Verify**：`npm test` 运行 23 项离线测试，不调用真实 Agent 或微信。真实 Agent 自检必须显式设置 `EXF_WEIXIN_TEST_AGENT` 并单独授权
+- **边界 / Limits**：仅支持个人微信私聊文字；不支持群聊、图片、语音、视频、文件、原生合并转发或全量聊天历史读取。运行凭证和聊天状态保存在本机 `~/.exflower/connectors/weixin/`，不进入仓库
+
 ---
 
 ## 内容创作 / Content Creation
@@ -186,9 +195,19 @@ Each skill folder contains detailed `SKILL.md` documentation for installation an
 # 复制到 OpenClaw skills 目录
 cp -r skills/[skill_name] ~/.openclaw/skills/
 
+# ExFlower 技能（按各技能 SKILL.md 安装）
+cp -r skills/[skill_name] ~/.exflower/skills/
+
+# 微信连接器：安装随包源码的锁定依赖
+cd ~/.exflower/skills/weixin-connector
+npm ci --ignore-scripts
+node bin/exf-weixin.js doctor --json
+
 # 或使用 clawhub（如果已发布）
 clawhub install [skill_name]
 ```
+
+每个技能都有独立目录。`weixin-connector` 等可执行 Skill 还提供 `bin/`、`src/`、`package.json`、`package-lock.json` 和测试；请保留完整目录，不要只复制 `SKILL.md`。`node_modules/`、凭证、消息状态和日志不应提交到仓库。
 
 ---
 

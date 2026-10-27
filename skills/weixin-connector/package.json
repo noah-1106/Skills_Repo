@@ -1,0 +1,16 @@
+{
+  "name": "exflower-weixin-connector",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Weixin private-chat connector for ExFlower agents",
+  "type": "module",
+  "bin": { "exf-weixin": "./bin/exf-weixin.js" },
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "test": "npm run test:offline",
+    "test:offline": "node --test --test-reporter=spec test/connector.test.js test/integration.test.js test/daemon-lanes.test.js",
+    "test:real": "node test/real-exflower-check.mjs"
+  },
+  "dependencies": { "qrcode": "1.5.4", "qrcode-terminal": "0.12.0" },
+  "license": "MIT"
+}
