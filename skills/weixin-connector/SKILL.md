@@ -32,7 +32,7 @@ description: 连接微信与 ExFlower 多 Agent。用户说“连接微信/微�
 ## 回复已有微信会话
 用户明确要求把结果发回微信时，先 `exf-weixin status --json` 找目标用户与绑定关系，再执行 `exf-weixin send --to 微信用户ID --text 内容 --json`。没有入站 context_token 就不能发送，不能伪造“已送达”；accepted 只表示微信服务接受。
 ## 异常处理
-先运行 `exf-weixin status --json`、`exf-weixin logs --json`、`exf-weixin doctor --json`。pending 不为 0 表示仍在重试，不要重复启动多个 daemon，不要手工清除 state.json。凭证失效时重新扫码。
+先运行 `exf-weixin status --json`、`exf-weixin logs --json`、`exf-weixin doctor --json`。pending 不为 0 表示仍在重试，不要重复启动多个 daemon，不要手工清除 state.json。默认失败 10 次或排队 24 小时后进入 deadLetters，保留原消息并放行同 lane 后续消息。用 `pending --json` 查看；人工重试/确认丢弃前先 stop，再执行 `pending retry --key ID` 或 `pending discard --key ID --yes`，完成后 start。凭证失效时重新扫码。
 - `npm test` 只运行离线测试；`npm run test:real` 会真实调用 ExFlower Agent，必须得到用户明确许可后单独运行。
 - 修改 connector 后，先备份状态并检查 pending 明细，再 `stop`、`start`；pending 会按 lane 恢复，不要求清零，绝不删除凭证、状态或历史文件。
-详细命令见 references/commands.md。
+不确定的 invoke 不按次数或年龄自动隔离，必须核对 taskId 后 recover。死信只隔离、不自动删除；没有 --yes 不得执行 discard。已 discarded 的死信是终态，禁止 retry/recover；缺 Agent 或原始消息等恢复元数据时必须拒绝并保持原状。详细命令见 references/commands.md。

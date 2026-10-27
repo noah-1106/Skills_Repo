@@ -42,15 +42,14 @@ test('未授权用户和群消息不进入 Agent', async () => {
   await connector.ingest([msg('m4', '@项项 你好', { from_user_id: 'stranger' }), msg('m5', '@项项 你好', { group_id: 'room' })]);
   assert.equal(calls.length, 0); assert.equal(sent.length, 0);
 });
-test('Agent 调用后失败会恢复同一 taskId，不重复创建任务', async () => {
+test('Agent 调用后自动退避重试仍复用同一 taskId，不重复创建任务', async () => {
   let waits = 0, invokes = 0;
   const exflower = { invoke: async () => { invokes++; return 'fixed-task'; }, waitForResult: async () => { if (++waits === 1) throw new Error('temporary poll failure'); return '恢复后的回复'; } };
   const { connector, sent } = fixture({ exflower });
   await connector.ingest([msg('recover', '@项项 测试恢复')]);
-  assert.equal(connector.state.pending.recover.message.message_id, 'recover');
-  await connector.retryPending();
   assert.equal(invokes, 1); assert.equal(waits, 2); assert.equal(sent[0].text, '恢复后的回复');
   assert.equal(Object.keys(connector.state.pending).length, 0);
+  assert.equal(Object.keys(connector.state.deadLetters).length, 0);
 });
 test('回复发送失败保留 Agent 结果，重试不再次调用 Agent', async () => {
   let invokes = 0, sends = 0;
@@ -80,7 +79,7 @@ test('iLink getupdates/sendmessage 使用协议字段且不回显 token', async 
   const update = await getUpdates(credentials, 'old', { fetchImpl });
   assert.equal(update.get_updates_buf, 'next');
   assert.equal(JSON.parse(seen[0].options.body).get_updates_buf, 'old');
-  assert.equal(JSON.parse(seen[0].options.body).base_info.bot_agent, 'ExFlower/0.2.0');
+  assert.equal(JSON.parse(seen[0].options.body).base_info.bot_agent, 'ExFlower/0.3.0');
   const sent = await sendText(credentials, 'owner', '回复', 'context', { clientId: 'stable-id', fetchImpl });
   const body = JSON.parse(seen[1].options.body);
   assert.equal(sent.clientId, 'stable-id'); assert.equal(body.msg.context_token, 'context'); assert.equal(body.msg.message_type, 2);
@@ -199,10 +198,9 @@ test('本地长命令回复也记录分片，重试不重发已接受片', async
     sender: async (to, text, token, options) => sendLongText({ token: 'x', baseUrl: 'https://example.test' }, to, text, token, { ...options, fetchImpl }),
   } });
   await connector.ingest([msg('local-long', '/agents')]);
-  assert.equal(connector.state.tasks['local-long'].kind, 'local');
-  assert.equal(connector.state.tasks['local-long'].sentClientIds.length, 1);
-  await connector.retryPending();
+  assert.equal(connector.state.tasks['local-long'], undefined);
   assert.equal(Object.keys(connector.state.pending).length, 0);
+  assert.equal(sends, 3);
   assert.equal(bodies.length, 2);
   assert.equal(bodies.filter(x => x.msg.client_id.endsWith(':0')).length, 1);
   assert.equal(bodies.filter(x => x.msg.client_id.endsWith(':1')).length, 1);

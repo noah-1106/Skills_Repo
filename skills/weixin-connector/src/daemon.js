@@ -4,6 +4,7 @@ import { ExFlowerClient } from './exflower.js';
 import { routeMessage, extractText, messageKey } from './router.js';
 import { getUpdates, sendLongText } from './weixin.js';
 import { paths, loadConfig, loadCredentials, loadState, saveState, writeJson, readJson } from './store.js';
+import { quarantineReason, quarantineMessage, retryDelayMs, restoreAgentTaskFromDeadLetter, assertRecoveryAllowed } from './delivery.js';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const log = message => console.log(`${new Date().toISOString()} ${message}`);
 export const HISTORY_TURNS = 12;
@@ -46,41 +47,60 @@ export function appendHistory(state, contextKey, agentId, userText, result) {
   // Always append a complete turn, then retain complete recent turns.
   state.histories[key] = [...previous, ...turn].slice(-HISTORY_TURNS * 2);
 }
+export function processedSet(state) { return new Set(state.processed || []); }
 export function pendingSummary(state) {
-  const keys = new Set(Object.keys(state.pending || {}));
+  const done = processedSet(state);
+  const keys = new Set(Object.keys(state.pending || {}).filter(key => !done.has(key)));
   for (const [key, task] of Object.entries(state.tasks || {})) {
-    if (task.message && !state.processed.includes(key)) keys.add(key);
+    if (task.message && !done.has(key) && !state.deadLetters?.[key]) keys.add(key);
   }
   return [...keys].map(key => {
     const pending = state.pending?.[key] || { attempts: 0, recovered: true };
+    if (!state.pending?.[key]) pending.lastError ||= task.invokeError || null;
     const task = state.tasks?.[key] || {};
     return {
       key, attempts: pending.attempts, lastError: pending.lastError || task.invokeError || null,
       kind: task.kind || (task.agentId ? 'agent' : null), agentId: task.agentId || null,
       invokeState: task.invokeState || null, taskId: task.taskId || null,
       lane: pending.lane || task.lane || null, blocked: Boolean(pending.blocked),
+      queuedAt: pending.queuedAt || null, nextRetryAt: pending.nextRetryAt || null,
       sentChunks: Array.isArray(task.sentClientIds) ? task.sentClientIds.length : 0,
     };
   });
 }
-export function attachPendingTask(state, key, taskId, persist = () => {}) {
-  const task = state.tasks?.[key];
-  if (!state.pending?.[key] && !task?.message) throw new Error(`No recoverable message for key ${key}`);
+export function attachPendingTask(state, key, taskId, persist = () => {}, options = {}) {
+  let task = state.tasks?.[key];
+  const pending = state.pending?.[key];
+  const dead = state.deadLetters?.[key];
+  if (!pending && !dead && !task?.message) throw new Error(`No recoverable message for key ${key}`);
+  assertRecoveryAllowed(state, key);
+  if (!task) task = restoreAgentTaskFromDeadLetter(state, key, {
+    readHistory: dead => {
+      const route = typeof options.route === 'function' ? options.route(dead.message) : null;
+      const contextKey = route?.contextKey || `${options.botId}:${dead.message.from_user_id}`;
+      return readHistory(state, contextKey, dead.agentId);
+    },
+  });
   if (!task || (task.kind || 'agent') !== 'agent') throw new Error(`Pending key ${key} is not an Agent task`);
   if (task.taskId && task.taskId !== taskId) throw new Error(`Pending key ${key} already has a different taskId`);
   if (!String(taskId || '').trim()) throw new Error('taskId is required');
   task.taskId = String(taskId).trim(); task.invokeState = 'accepted'; task.invokeError = null;
-  if (state.pending?.[key]) {
-    state.pending[key].blocked = false;
-    state.pending[key].lastError = null;
-  }
+  const source = pending || dead || {};
+  const seq = source.seq || task.seq || (state.nextSeq = (state.nextSeq || 0) + 1);
+  task.seq = seq;
+  state.pending[key] = {
+    message: source.message || task.message, attempts: 0, lastError: null, erroredAt: null,
+    blocked: false, lane: source.lane || task.lane, seq,
+    queuedAt: new Date().toISOString(), nextRetryAt: null,
+  };
+  delete state.deadLetters[key];
   persist(state);
-  return { key, taskId: task.taskId, agentId: task.agentId, status: 'attached' };
+  return { key, taskId: task.taskId, agentId: task.agentId, status: 'attached', source: pending ? 'pending' : dead ? 'deadLetters' : 'tasks' };
 }
 export class Connector {
   constructor({ config, credentials, state, exflower, sender, logger = log, persist = saveState, signal = null }) {
     this.config = config; this.credentials = credentials; this.state = state;
-    this.state.histories ||= {}; this.state.tasks ||= {}; this.state.pending ||= {}; this.state.processed ||= [];
+    this.state.histories ||= {}; this.state.tasks ||= {}; this.state.pending ||= {}; this.state.deadLetters ||= {}; this.state.processed ||= [];
     this.exflower = exflower || new ExFlowerClient(config);
     this.sender = sender || ((to, text, token, options) => sendLongText(credentials, to, text, token, options));
     this.logger = logger; this.persist = persist; this.signal = signal;
@@ -88,7 +108,10 @@ export class Connector {
     this.lanes = new Map();
   }
   contextKey(from) { return `${this.credentials.ilink_bot_id}:${from}`; }
-  allowed(from) { return !this.config.allowFrom?.length || this.config.allowFrom.includes(from) || from === this.credentials.ilink_user_id; }
+  allowed(from) {
+    if (from === this.credentials.ilink_user_id) return true;
+    return Array.isArray(this.config.allowFrom) && this.config.allowFrom.length > 0 && this.config.allowFrom.includes(from);
+  }
   laneFor(message, task = null) {
     const contextKey = this.contextKey(String(message.from_user_id || ''));
     if (task?.lane) return task.lane;
@@ -96,7 +119,9 @@ export class Connector {
   }
   prepare(message, { deferHistory = false } = {}) {
     const key = messageKey(message);
+    if (!key) throw new Error('Recovered task has no durable message key');
     if (this.state.processed.includes(key)) return { status: 'duplicate', key };
+    if (this.state.deadLetters[key]) return { status: 'dead_letter', key, reason: this.state.deadLetters[key].reason };
     if (message.message_type === 2 || message.group_id) return { status: 'ignored', key };
     const from = String(message.from_user_id || '');
     if (!from || !this.allowed(from)) return { status: 'unauthorized', key };
@@ -184,6 +209,10 @@ export class Connector {
     const immediate = [], lanes = new Set();
     for (const message of messages) {
       const key = messageKey(message);
+      if (this.state.deadLetters[key]) {
+        immediate.push({ status: 'dead_letter', key, reason: this.state.deadLetters[key].reason });
+        continue;
+      }
       if (this.state.pending[key]) {
         lanes.add(this.state.pending[key].lane || this.laneFor(message, this.state.tasks[key]));
         continue;
@@ -192,7 +221,7 @@ export class Connector {
       if (prepared.status) { immediate.push(prepared); continue; }
       const { task } = prepared;
       const seq = (this.state.nextSeq || 0) + 1; this.state.nextSeq = seq; task.seq = seq;
-      this.state.pending[key] = { message, attempts: 0, lastError: null, blocked: false, lane: task.lane, seq };
+      this.state.pending[key] = { message, attempts: 0, lastError: null, blocked: false, lane: task.lane, seq, queuedAt: new Date().toISOString(), nextRetryAt: null };
       lanes.add(task.lane);
     }
     // Durable queue (including raw messages) is committed before workers or sync cursor advance.
@@ -207,15 +236,21 @@ export class Connector {
   }
   recoverPending() {
     let changed = false;
+    for (const key of Object.keys(this.state.pending)) {
+      if (processedSet(this.state).has(key)) {
+        delete this.state.pending[key];
+        changed = true;
+      }
+    }
     for (const [key, task] of Object.entries(this.state.tasks)) {
-      if (this.state.pending[key] || !task.message || this.state.processed.includes(key)) continue;
+      if (this.state.pending[key] || this.state.deadLetters[key] || !task.message || this.state.processed.includes(key)) continue;
       const seq = task.seq || (this.state.nextSeq = (this.state.nextSeq || 0) + 1);
       task.seq = seq;
       this.state.pending[key] = {
         message: task.message, attempts: 0, recovered: true,
         lastError: task.invokeError || 'Recovered cached delivery after restart',
         blocked: ['calling', 'uncertain', 'rejected'].includes(task.invokeState),
-        lane: this.laneFor(task.message, task), seq,
+        lane: this.laneFor(task.message, task), seq, queuedAt: new Date().toISOString(), nextRetryAt: null,
       };
       changed = true;
     }
@@ -223,6 +258,10 @@ export class Connector {
       const task = this.state.tasks[key];
       if (!pending.lane) { pending.lane = this.laneFor(pending.message, task); changed = true; }
       if (!pending.seq) { pending.seq = (this.state.nextSeq = (this.state.nextSeq || 0) + 1); changed = true; }
+      if (!Number.isSafeInteger(pending.attempts) || pending.attempts < 0) { pending.attempts = 0; changed = true; }
+      if (!pending.queuedAt) { pending.queuedAt = new Date().toISOString(); changed = true; }
+      if (pending.nextRetryAt === undefined) { pending.nextRetryAt = null; changed = true; }
+      if (task && !task.taskId && ['calling', 'uncertain', 'rejected'].includes(task.invokeState) && !pending.blocked) { pending.blocked = true; changed = true; }
     }
     if (changed) this.persist(this.state);
   }
@@ -249,9 +288,23 @@ export class Connector {
   }
   syncLastError() {
     const errors = Object.entries(this.state.pending).filter(([, x]) => x.lastError);
-    if (!errors.length) { this.state.lastError = null; return; }
-    const [key, pending] = errors[errors.length - 1];
-    this.state.lastError = { key, message: pending.lastError, at: pending.erroredAt || new Date().toISOString() };
+    if (errors.length) {
+      const [key, pending] = errors[errors.length - 1];
+      this.state.lastError = { key, message: pending.lastError, at: pending.erroredAt || new Date().toISOString() };
+      return;
+    }
+    const dead = Object.entries(this.state.deadLetters).filter(([, x]) => x.lastError).sort((a, b) => String(a[1].deadAt).localeCompare(String(b[1].deadAt)));
+    if (!dead.length) { this.state.lastError = null; return; }
+    const [key, record] = dead[dead.length - 1];
+    this.state.lastError = { key, message: record.lastError, at: record.deadAt, deadLetter: true, reason: record.reason };
+  }
+  async waitRetry(ms) {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (this.signal?.aborted) return false;
+      await sleep(Math.min(250, deadline - Date.now()));
+    }
+    return !this.signal?.aborted;
   }
   async pumpLane(lane) {
     const results = [];
@@ -262,24 +315,49 @@ export class Connector {
       if (!entry) break;
       const [key, pending] = entry;
       if (pending.blocked) break;
+      const earlyReason = quarantineReason(this.state, key, this.config);
+      if (earlyReason) {
+        const dead = quarantineMessage(this.state, key, earlyReason);
+        this.syncLastError(); this.persist(this.state);
+        this.logger(`message dead_letter key=${key} reason=${earlyReason} attempts=${dead.attempts}`);
+        results.push({ key, lane, status: 'dead_letter', reason: earlyReason, attempts: dead.attempts });
+        continue;
+      }
+      const retryAt = Date.parse(pending.nextRetryAt || '');
+      if (Number.isFinite(retryAt) && retryAt > Date.now()) {
+        if (!await this.waitRetry(retryAt - Date.now())) break;
+        continue;
+      }
       try {
         const result = await this.process(pending.message);
-        results.push({ key, ...result });
+        results.push({ key, lane, ...result });
         if (TERMINAL.has(result.status)) delete this.state.pending[key];
         if (result.status === 'blocked') {
           pending.blocked = true; pending.lastError = result.reason; pending.erroredAt = new Date().toISOString();
         }
         this.syncLastError(); this.persist(this.state);
-        this.logger(`message ${JSON.stringify({ key, ...result })}`);
+        this.logger(`message ${JSON.stringify({ key, lane, ...result })}`);
         if (result.status === 'blocked') break;
       } catch (error) {
         pending.attempts = (pending.attempts || 0) + 1;
         pending.lastError = error.message; pending.erroredAt = new Date().toISOString();
+        const task = this.state.tasks[key];
+        pending.blocked = error.message.startsWith('invoke_uncertain') || Boolean(task && !task.taskId && ['calling', 'uncertain', 'rejected'].includes(task.invokeState));
         this.syncLastError(); this.persist(this.state);
         this.logger(`message retry key=${key} error=${error.message}`);
-        results.push({ key, status: 'retry', error: error.message });
-        // Preserve order: later messages in this lane wait; other lanes continue independently.
-        break;
+        const reason = quarantineReason(this.state, key, this.config);
+        if (reason) {
+          const dead = quarantineMessage(this.state, key, reason);
+          this.syncLastError(); this.persist(this.state);
+          this.logger(`message dead_letter key=${key} reason=${reason} attempts=${dead.attempts}`);
+          results.push({ key, lane, status: 'dead_letter', reason, error: error.message, attempts: dead.attempts });
+          continue;
+        }
+        const delay = pending.blocked ? 0 : retryDelayMs(pending.attempts);
+        pending.nextRetryAt = pending.blocked ? null : new Date(Date.now() + delay).toISOString();
+        this.persist(this.state);
+        results.push({ key, lane, status: 'retry', error: error.message, attempts: pending.attempts, blocked: pending.blocked, nextRetryAt: pending.nextRetryAt });
+        if (pending.blocked || !await this.waitRetry(delay)) break;
       }
     }
     return results;

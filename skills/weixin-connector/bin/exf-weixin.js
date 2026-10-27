@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ExFlowerClient, bareAgentId } from '../src/exflower.js';
 import { createLogin, pollLoginOnce, pollLoginLoop, publicLoginStatus, sendLongText } from '../src/weixin.js';
 import { runDaemon, pendingSummary, attachPendingTask } from '../src/daemon.js';
+import { deadLetterSummary, retryMessage, discardMessage, retryPolicy } from '../src/delivery.js';
 import { paths, loadConfig, saveConfig, loadCredentials, loadState, saveState, readJson, publicConfig } from '../src/store.js';
 const argv = process.argv.slice(2);
 const json = argv.includes('--json');
@@ -16,7 +17,7 @@ const has = name => args.includes(name);
 const output = (data, text) => { if (json) console.log(JSON.stringify(data, null, 2)); else if (text) console.log(text); else console.log(typeof data === 'string' ? data : JSON.stringify(data, null, 2)); };
 const running = () => { const p = readJson(paths().pid); if (!p?.pid) return null; try { process.kill(p.pid, 0); return p; } catch { return null; } };
 async function main() {
-  if (has('--help') || command === 'help') return output(`exf-weixin 0.2.0 — ExFlower 微信文字连接器\n\n连接：doctor | login [--no-wait] | login-status [--code N] | status\nAgent：agents sync | agents list | agents bind --agent ID --alias 别名 | agents unbind ID\n后台：start | stop | daemon run [--once]\n回复：send --to 微信用户ID --text 文字\n权限：allow list | allow add 微信用户ID\n诊断：logs\n\n所有命令支持 --json。凭证不会出现在输出中。`);
+  if (has('--help') || command === 'help') return output(`exf-weixin 0.3.0 — ExFlower 微信文字连接器\n\n连接：doctor | login [--no-wait] | login-status [--code N] | status\nAgent：agents sync | agents list | agents bind --agent ID --alias 别名 | agents unbind ID\n后台：start | stop | daemon run [--once]\n回复：send --to 微信用户ID --text 文字\n权限：allow list | allow add 微信用户ID\n队列：pending | pending retry --key ID | pending discard --key ID --yes | pending policy [--max-attempts N --max-age-hours H]\n诊断：logs\n\n所有命令支持 --json。凭证不会出现在输出中。`);
   if (command === 'doctor') {
     const config = loadConfig(); let health = null, error = null;
     try { health = await new ExFlowerClient(config).health(); } catch (e) { error = e.message; }
@@ -89,15 +90,55 @@ async function main() {
     await runDaemon({ signal: controller.signal, once: has('--once') }); return;
   }
   if (command === 'status') {
-    const state = loadState(); return output({ weixin: publicLoginStatus(), daemon: running(), config: publicConfig(loadConfig()), processed: state.processed.length, pending: pendingSummary(state).length, pendingDetails: pendingSummary(state), bindings: state.bindings, lastError: state.lastError, log: paths().log });
+    const state = loadState(); return output({ weixin: publicLoginStatus(), daemon: running(), config: publicConfig(loadConfig()), processed: state.processed.length, pending: pendingSummary(state).length, pendingDetails: pendingSummary(state), deadLetters: deadLetterSummary(state), retryPolicy: retryPolicy(loadConfig()), bindings: state.bindings, lastError: state.lastError, log: paths().log });
   }
-  if (command === 'pending') return output({ pending: pendingSummary(loadState()) });
+  if (command === 'pending') {
+    const sub = args[1];
+    if (!sub || sub === 'list') {
+      const state = loadState();
+      return output({ pending: pendingSummary(state), deadLetters: deadLetterSummary(state), policy: retryPolicy(loadConfig()) });
+    }
+    if (sub === 'dead') return output({ deadLetters: deadLetterSummary(loadState()) });
+    if (sub === 'policy') {
+      const config = loadConfig();
+      const attempts = option('--max-attempts'), age = option('--max-age-hours');
+      if (attempts !== undefined) {
+        const value = Number(attempts);
+        if (!Number.isSafeInteger(value) || value < 1) throw new Error('--max-attempts 必须是正整数');
+        config.pendingMaxAttempts = value;
+      }
+      if (age !== undefined) {
+        const value = Number(age);
+        if (!Number.isFinite(value) || value <= 0) throw new Error('--max-age-hours 必须是正数');
+        config.pendingMaxAgeHours = value;
+      }
+      if (attempts !== undefined || age !== undefined) saveConfig(config);
+      return output({ policy: retryPolicy(config) });
+    }
+    if (sub === 'retry' || sub === 'discard') {
+      if (running()) throw new Error('请先 stop，再修改队列；完成后 start。禁止运行中改写 state');
+      const key = option('--key');
+      if (!key) throw new Error(`${sub} 需要 --key 消息键`);
+      const state = loadState(); const credentials = loadCredentials();
+      const recoveryOptions = {
+        botId: credentials?.ilink_bot_id,
+        route: message => ({ contextKey: `${credentials?.ilink_bot_id}:${message.from_user_id}` }),
+      };
+      const result = sub === 'retry' ? retryMessage(state, key, recoveryOptions) : discardMessage(state, key, has('--yes'));
+      saveState(state);
+      return output(result);
+    }
+    throw new Error(`未知 pending 子命令: ${sub}`);
+  }
   if (command === 'recover') {
     if (running()) throw new Error('recover 写入状态前必须先 stop daemon，避免旧内存覆盖人工恢复');
     const key = option('--key'); const taskId = option('--task-id');
     if (!key || !taskId) throw new Error('recover 需要 --key 消息键 --task-id 人工核对后的真实任务ID');
-    const state = loadState();
-    return output(attachPendingTask(state, key, taskId, saveState));
+    const state = loadState(); const credentials = loadCredentials();
+    return output(attachPendingTask(state, key, taskId, saveState, {
+      botId: credentials?.ilink_bot_id,
+      route: message => ({ contextKey: `${credentials?.ilink_bot_id}:${message.from_user_id}` }),
+    }));
   }
   if (command === 'logs') { const text = fs.existsSync(paths().log) ? fs.readFileSync(paths().log, 'utf8') : ''; return output(text.split('\n').slice(-100).join('\n')); }
   if (command === 'send') {

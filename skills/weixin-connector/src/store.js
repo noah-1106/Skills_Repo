@@ -32,6 +32,8 @@ export function loadConfig() {
     apiKey: process.env.OPENEXTEAM_API_KEY || '',
     agents: config.agents && typeof config.agents === 'object' ? config.agents : {},
     allowFrom: Array.isArray(config.allowFrom) ? config.allowFrom.map(String) : [],
+    pendingMaxAttempts: config.pendingMaxAttempts,
+    pendingMaxAgeHours: config.pendingMaxAgeHours,
   };
 }
 export function saveConfig(config) {
@@ -50,13 +52,15 @@ export function loadState() {
     processed: Array.isArray(state.processed) ? state.processed : [],
     tasks: state.tasks || {},
     pending: state.pending || {},
+    deadLetters: state.deadLetters && typeof state.deadLetters === 'object' && !Array.isArray(state.deadLetters) ? state.deadLetters : {},
     nextSeq: Number.isSafeInteger(state.nextSeq) ? state.nextSeq : 0,
     lastError: state.lastError || null,
   };
 }
 export function saveState(state) {
-  state.processed = [...new Set(state.processed)].slice(-2000);
+  // Completed IDs are the durable dedupe record. Never evict them with a recent-items window.
+  state.processed = [...new Set(state.processed)];
   writeJson(paths().state, state, true);
 }
 export function accountId(credentials) { return String(credentials.ilink_bot_id || 'default').replace(/[^A-Za-z0-9_.-]/g, '_'); }
-export function publicConfig(config) { return { exflowerUrl: config.exflowerUrl, agents: config.agents, allowFrom: config.allowFrom }; }
+export function publicConfig(config) { return { exflowerUrl: config.exflowerUrl, agents: config.agents, allowFrom: config.allowFrom, pendingMaxAttempts: config.pendingMaxAttempts, pendingMaxAgeHours: config.pendingMaxAgeHours }; }

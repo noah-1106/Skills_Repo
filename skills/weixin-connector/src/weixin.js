@@ -6,7 +6,7 @@ import { paths, readJson, writeJson, loadCredentials, saveCredentials, loadConfi
 
 export const FIXED_BASE_URL = 'https://ilinkai.weixin.qq.com';
 const CHANNEL_VERSION = '2.4.10';
-const CONNECTOR_VERSION = '0.2.0';
+const CONNECTOR_VERSION = '0.3.0';
 const APP_VERSION = ((2 & 255) << 16) | ((4 & 255) << 8) | (10 & 255);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 

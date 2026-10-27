@@ -1,4 +1,4 @@
-# ExFlower 微信连接器 V0.2
+# ExFlower 微信连接器 V0.3
 把个人微信私聊文字路由给指定 ExFlower Agent，并把最终回复送回微信。Skill 与 CLI 一同分发，不需要另找项目源码。
 
 ## 安装
@@ -35,6 +35,14 @@ node bin/exf-weixin.js doctor --json
 - 入站原始消息先落盘，再推进同步游标；重启从 pending 与任务缓存恢复，已有 taskId 不重复 invoke。
 - Agent 绑定按消息到达时更新，旧任务完成不会把绑定改回去。
 
+## 失败与死信
+- 默认同一消息失败 10 次或排队超过 24 小时后进入 `deadLetters`；可用 `pending policy --max-attempts N --max-age-hours H` 调整。旧队列升级时从首次运行新版开始计龄。
+- 死信保留原消息、taskId、错误与次数，不自动删除，也不再阻塞同 lane 后续消息。重复入站不会复活死信。
+- `invokeState=calling/uncertain/rejected` 仍需人工核对 taskId，不能靠年龄、次数、retry 或 discard 自动跳过。
+- 修改队列前先 `stop`：`pending retry --key ID` 重置重试并保留原顺序；`pending discard --key ID --yes` 只确认归档，不抹除原始记录；`recover --key ID --task-id 已核对ID` 可恢复 pending 或非 discarded 死信。已 discarded 是终态，retry/recover 均拒绝；缺 Agent/原始消息等元数据也拒绝且不改状态。完成后 `start`。
+- 完成消息 ID 作为持久去重记录保留，不按最近 2000 条窗口淘汰；清理前应先停止 daemon 并备份 state。
+- `pending --json` 和 `status --json` 同时列出活动队列与死信摘要，不输出消息正文。
+
 ## 数据与安全
 凭证、配置和运行状态保存在 `~/.exflower/connectors/weixin/`，不在 Skill 包内。凭证与状态权限为 0600。默认只允许扫码者；添加其他微信用户必须得到所有者明确授权。
 
@@ -47,7 +55,7 @@ ExFlower 调用接口没有幂等键。连接明确拒绝可自动重试；调�
 
 ## 验证
 ```bash
-npm test                 # 23 项离线测试，不调用真实 Agent 或微信
+npm test                 # 40 项离线测试，不调用真实 Agent 或微信
 EXF_WEIXIN_TEST_AGENT=agent-id npm run test:real
 ```
 
