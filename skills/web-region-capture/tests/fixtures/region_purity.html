@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Region purity fixture</title>
+<style>
+body{margin:0;background:#eef2f7;font-family:Arial,sans-serif}.case{position:relative;margin:20px;width:700px;background:white;padding:20px}.text-target{width:620px;font:20px/30px Arial,sans-serif;margin:0}.floater{float:right;width:170px;height:180px;background:rgb(255,0,0);color:white}.card{position:relative;width:400px;height:150px;background:#cce8ff;padding:20px}.inside-float{float:right;width:100px;height:100px;background:red}.overlay{position:absolute;left:80px;top:60px;width:180px;height:60px;background:#882288;color:white}.duplicate{display:inline-block;width:50px;height:30px;background:green}
+</style>
+<div class="case" id="text-case"><div class="floater" id="text-floater">EXCLUDED SIDEBAR</div><p class="text-target" id="text-target">Alan Mathison Turing was an English mathematician, computer scientist, logician, cryptanalyst, philosopher and theoretical biologist. He was highly influential in the development of theoretical computer science, providing a formalisation of the concepts of algorithm and computation with the Turing machine.</p></div>
+<div class="case"><div class="card" id="pure-card"><span>PURE TARGET</span><div class="inside-float" id="inside-float"></div></div></div>
+<div class="case"><div class="card" id="occluded-card"><span>OCCLUDED TARGET</span></div><div class="overlay" id="unexpected-overlay" style="top:80px">UNEXPECTED OVERLAY</div></div>
+<div class="case"><span class="duplicate"></span><span class="duplicate"></span></div>
+</html>

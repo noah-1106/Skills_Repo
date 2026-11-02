@@ -1,0 +1,15 @@
+{
+  "start_url": "tests/fixtures/demo.html",
+  "actions": [
+    {"type": "fill", "selector": "#query", "value_from": "subject_query"},
+    {"type": "click", "selector": "#search"},
+    {"type": "wait_for_selector", "selector": "#results"}
+  ],
+  "identity": {"selector": "#identity", "expected_from": "subject_query"},
+  "viewport": {"width": 1280, "height": 900},
+  "headless": true,
+  "recipes": {
+    "gender": "[data-testid=gender]",
+    "audience": "[data-testid=audience]"
+  }
+}

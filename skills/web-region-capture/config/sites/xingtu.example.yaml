@@ -1,0 +1,30 @@
+# 结构示例，不是已验证的星图处方。所有 replace-me 必须经 POC 证据填写。
+version: 1
+site: xingtu
+browser:
+  driver: playwright
+  channel: chromium
+  headless: false
+  profile_dir: data/browser-profile
+navigation:
+  home_url: "https://example.invalid/replace-after-poc"
+  search: replace-me
+  identity:
+    require_one_of: [creator_id, canonical_url, exact_nickname]
+regions:
+  gender:
+    tab_text: "replace-me"
+    anchor_text: "粉丝性别比例"
+    scope: "replace-with-verified-panel"
+    container: closest_business_card
+    padding_px: 12
+  audience:
+    tab_text: "replace-me"
+    anchor_text: "八大人群"
+    scope: "replace-with-verified-panel"
+    container: closest_business_card
+    padding_px: 12
+viewport:
+  width: 1440
+  height: 1000
+  device_scale_factor: 1

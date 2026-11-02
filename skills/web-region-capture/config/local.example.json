@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "browser_path": "runtime/ms-playwright",
+  "browser": {
+    "driver": "playwright",
+    "channel": "chromium"
+  },
+  "lark_bitable_enabled": false
+}

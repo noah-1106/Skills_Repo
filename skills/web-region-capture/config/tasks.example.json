@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "task_id": "replace-me-001",
+      "site": "xingtu",
+      "subject_key": "replace-with-stable-creator-id-or-approved-url",
+      "subject_query": "replace-with-test-creator",
+      "regions": ["gender", "audience"],
+      "destination": {
+        "type": "folder",
+        "path": "outputs/replace-me-001"
+      }
+    },
+    {
+      "task_id": "replace-me-excel-001",
+      "site": "xingtu",
+      "subject_key": "replace-with-stable-creator-id",
+      "subject_query": "replace-with-test-creator",
+      "regions": ["gender", "audience"],
+      "destination": {
+        "type": "excel",
+        "path": "outputs/test-report.xlsx",
+        "sheet": "达人提报",
+        "cells": {
+          "gender": "C5",
+          "audience": "D5"
+        },
+        "image_fit": "contain",
+        "overwrite": false
+      }
+    },
+    {
+      "task_id": "replace-me-base-001",
+      "site": "xingtu",
+      "subject_key": "replace-with-stable-creator-id",
+      "subject_query": "replace-with-test-creator",
+      "regions": ["gender"],
+      "destination": {
+        "type": "lark_bitable",
+        "base_token": "replace-after-user-supplies-test-base",
+        "table_id": "replace-me",
+        "record_id": "replace-me",
+        "fields": {
+          "gender": "replace-with-attachment-field-id"
+        },
+        "mode": "append",
+        "allow_replace": false
+      }
+    }
+  ]
+}

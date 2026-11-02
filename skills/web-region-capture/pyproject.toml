@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "web-region-capture"
+version = "0.2.0"
+description = "Client-independent, evidence-first web region capture"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright==1.64.1",
+  "openpyxl==3.1.5",
+  "Pillow==13.0.0",
+]
+
+[project.scripts]
+web-region-capture = "web_region_capture.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

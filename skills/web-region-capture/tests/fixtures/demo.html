@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Region capture test</title>
+<style>
+body{font-family:sans-serif;margin:0;background:#eef2f7}.page{width:1000px;margin:20px auto}.card{background:white;border:2px solid #ccd5e0;border-radius:12px;padding:24px;margin:20px}.chart{height:180px;display:flex;align-items:end;gap:20px}.bar{width:100px;background:#3977ed;color:white;padding:12px}.hidden{display:none}h2{margin-top:0}
+</style>
+<div class="page">
+<input id="query" value="初始"><button id="search" onclick="document.querySelector('#identity').textContent=document.querySelector('#query').value;document.querySelector('#results').classList.remove('hidden')">搜索</button>
+<div id="identity">未加载</div>
+<div id="results" class="hidden">
+<section class="card" data-testid="gender"><h2>粉丝性别比例</h2><div class="chart"><div class="bar" style="height:120px">女性 60%</div><div class="bar" style="height:80px;background:#e778a7">男性 40%</div></div></section>
+<section class="card" data-testid="audience"><h2>八大人群</h2><div class="chart"><div class="bar" style="height:100px;background:#20a383">小镇青年</div><div class="bar" style="height:140px;background:#8855cc">都市白领</div></div></section>
+</div></div></html>

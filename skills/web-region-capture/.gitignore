@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Playwright managed Chromium (~300MB, reinstalled by scripts/bootstrap.sh)
+runtime/ms-playwright/
+runtime/tmp/
+
+# Run artifacts: reproducible, potentially large; selected evidence logs are
+# committed explicitly with `git add -f evidence/<file>` when they back a claim.
+data/runs/
+outputs/
+
+# Local machine config (paths only, never credentials)
+config/local.json
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Temp
+*.pending-*/

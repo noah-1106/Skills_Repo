@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "site_file": "config/sites/offline-demo.json",
+  "tasks": [
+    {
+      "task_id": "离线 演示 folder",
+      "subject_query": "测试达人",
+      "regions": ["gender", "audience"],
+      "destination": {"type": "folder", "path": "outputs/离线 演示"}
+    },
+    {
+      "task_id": "离线 演示 excel",
+      "subject_query": "测试达人",
+      "regions": ["gender", "audience"],
+      "destination": {
+        "type": "excel",
+        "source_path": "tests/fixtures/中文 源表.xlsx",
+        "path": "outputs/中文 结果表.xlsx",
+        "sheet": "达人提报",
+        "cells": {"gender": "C5", "audience": "D5"},
+        "overwrite": false
+      }
+    }
+  ]
+}
