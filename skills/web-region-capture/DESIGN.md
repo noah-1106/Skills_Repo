@@ -1,7 +1,7 @@
 # web-region-capture · 项目设计 V0.2
 
 > 状态：离线回归 8/8；Wikipedia 公共站真实 POC 功能链通过，首段区域纯净度待修；星图未测。飞书仅 dry-run，未真实写入。详见 `TEST-STATUS.md`。
-> 唯一开发正本：`/Volumes/Backups/web-region-capture/`（Noah 当前机器）；代码与配置不得硬编码此绝对路径。
+> 项目可放在任意可写目录；代码与配置不得硬编码本机绝对路径。
 > 用户：Windows / macOS；客户端：Codex、Claude Code、WorkBuddy 或其他能执行本地命令的 Agent。
 > 核心产物：网页指定业务区域 PNG → 显式目录、Excel 单元格锚点或飞书多维表格附件单元格。
 

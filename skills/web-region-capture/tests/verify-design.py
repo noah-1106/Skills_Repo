@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
 
-root = Path('/Volumes/Backups/web-region-capture')
+root = Path(__file__).resolve().parents[1]
 files = {
     'design': root / 'DESIGN.md',
     'environment': root / 'ENVIRONMENT.md',
@@ -9,7 +9,7 @@ files = {
     'excel': root / 'docs/LOCAL_EXCEL.md',
     'tasks': root / 'config/tasks.example.json',
     'site': root / 'config/sites/xingtu.example.yaml',
-    'pointer': Path('/Users/tannoah/.exflower/workspace/agent-022/web-region-capture/POINTER.md'),
+    'readme': root / 'README.md',
 }
 for name, path in files.items():
     assert path.is_file() and path.stat().st_size > 0, (name, path)
@@ -19,7 +19,7 @@ base = files['base'].read_text()
 excel = files['excel'].read_text()
 tasks = json.loads(files['tasks'].read_text())
 assert all(x in design for x in ['Windows / macOS', 'Codex、Claude Code、WorkBuddy', 'Playwright 托管 Chromium', 'OpenCLI = 可选浏览器驱动', '不必安装 Chrome'])
-assert all(x in design for x in ['显式单元格映射', 'larksuite/cli', 'record_id + 每个区域对应的附件 field_id', '/Volumes/Backups/web-region-capture/'])
+assert all(x in design for x in ['显式单元格映射', 'larksuite/cli', 'record_id + 每个区域对应的附件 field_id', '显式单元格映射'])
 assert all(x in env for x in ['PLAYWRIGHT_BROWSERS_PATH', 'python -m playwright install chromium', 'Windows PowerShell', '可选组件需要', '不预设 Chrome'])
 assert all(x in base for x in ['npx @larksuite/cli@latest install', 'lark-cli config init', 'lark-cli auth login --recommend', 'base +record-upload-attachment', '--record-id', '--field-id', '默认是追加，不是替换', '+record-download-attachment'])
 assert all(x in excel for x in ['工作簿路径', '工作表名', '浮动图片锚定到指定单元格', '不是 Microsoft 365 原生'])

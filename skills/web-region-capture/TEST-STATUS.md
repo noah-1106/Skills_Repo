@@ -3,7 +3,7 @@
 ## 置顶（2026-11-02 M2D）：全量离线回归 30/30 通过
 
 ```bash
-cd /Volumes/Backups/web-region-capture
+cd /path/to/web-region-capture
 PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py' -v
 # Ran 30 tests in ~10s ... OK（exit=0，0 跳过）
 ```
