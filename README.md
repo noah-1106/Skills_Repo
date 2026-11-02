@@ -92,6 +92,14 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **安装 / Install**：填入你的 MiniMax API key 到 `skills/minimax-av/config.json`（或设环境变量 `MINIMAX_API_KEY`），然后 `python3 skills/minimax-av/scripts/minimax_av.py transcribe audio.mp3 --format srt` 或 `python3 skills/minimax-av/scripts/minimax_av.py understand video.mp4 cover.png --prompt "总结内容"`
 - **限制**：ASR ≤50MB/≤500 秒（超长直接拒）；视频理解需 MiniMax-M3（其他模型收到视频"看不到"）；M3 推理占 max_tokens（默认 4096，空回答时调大）；图片 >2MB 建议先缩放
 
+#### web-region-capture
+- **技能名称 / Name**：网页区域截图与证据交付 / Web Region Capture
+- **技能描述 / Description**：把网页的显式业务区域截成可复核 PNG 证据，再安全送到本地目录、Excel 指定单元格或飞书 Base 附件。Playwright 托管 Chromium（无需 Chrome），身份断言 + 区域纯净度门禁（缺失/歧义/遮挡独立阻断），manifest 全链 hash 可续跑，默认 dry-run 绝不静默覆盖 / Capture explicit web regions as verifiable PNG evidence, delivered to folders, Excel cells, or Feishu Base attachments. Playwright-managed Chromium (no Chrome needed), identity assertion + region purity gates, manifest hash chain with safe resume, dry-run by default.
+- **当前版本 / Version**：0.2.0 (M2D)
+- **发布日期 / Date**：2026-11-02
+- **验证 / Validation**：离线回归 30/30 通过；CLI dry-run → resume → execute-local 幂等全通。Windows、真实 Base 写入、星图站点未实测
+- **安装 / Install**：`cd skills/web-region-capture && bash scripts/bootstrap.sh`，见 `SKILL.md`
+
 ---
 
 ## 技能管理 / Skill Management
