@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/geopulse.db*
+backend/secrets.json
+backend/config.json
+backend/backups/
+outputs/*
+!outputs/.gitkeep
+.coverage
+htmlcov/
+test-results/
+playwright-report/
+.DS_Store

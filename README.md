@@ -43,13 +43,14 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **限制**：图片 ≤10MB；视频 ≤50MB；国外 URL 源智谱服务端拉取易失败（加 `--download` 本地下载绕过）；并发约 5 QPS；空回答时加大 --max-tokens（推理占额）
 
 #### geopulse
-- **技能名称 / Name**：自托管 AI 品牌可见性监测系统 / Self-hosted AI Brand Visibility Monitor (GEO)
-- **技能描述 / Description**：完整的 GEO（生成式引擎优化）监测系统，前后端自带、skill 内自包含。监测品牌在 AI 引擎回答中的可见率、声量份额、引用深度（提名/描述/推荐）、四维热力图（品牌词/场景词/对比词/选购词），一键导出可发客户的诊断报告。demo 引擎零 API Key 开箱即用，填任意 OpenAI 兼容端点（DeepSeek/智谱/通义/Kimi/OpenAI）即接入生产，数据全程留在本机 `~/.geopulse/` / Complete GEO (Generative Engine Optimization) monitoring system with bundled frontend & backend. Tracks brand visibility, share-of-voice, mention depth (named/described/recommended) and a 4-dimension heatmap, exports client-ready diagnostic reports. Works out-of-the-box with a zero-key demo engine; connect any OpenAI-compatible endpoint (DeepSeek/Zhipu/Qwen/Kimi/OpenAI) for production. All data stays local.
-- **当前版本 / Version**：1.2.0
-- **发布日期 / Date**：2026-09-07
-- **安装 / Install**：`pip3 install --user -r skills/geopulse/requirements.txt` 后 `python3 skills/geopulse/scripts/geopulse_ctl.py start`（首次自动建库+演示数据）；日常管理 `geopulse_ctl.py status/engine/brands/prompts/run/report`
-- **自检 / Self-test**：`python3 skills/geopulse/tests/test_integration.py`（36 项集成测试）
-- **浏览器**：`http://127.0.0.1:8700`（仪表盘 / Prompt 库 / 品牌与引擎）
+- **技能名称 / Name**：自托管多客户 GEO 交付工作台 / Self-hosted Multi-client GEO Delivery Workbench
+- **技能描述 / Description**：完整前后端自包含，覆盖项目与问题集、实体消歧、可恢复 Wave/Run 测量、全量 Judge 与人工 revision、严格同口径比较、机会与七步 Action、不可变客户/内部报告，以及权限、调度、成本和备份。支持零 Key Demo、OpenAI-compatible memory 与 Kimi Search + Chat 检索增强 API；demo、memory/search 和 API/消费端始终分开 / Self-contained multi-client GEO operations with versioned prompt/entity protocols, resumable measurement, evidence revisions, strict comparisons, opportunity/action workflows, immutable HTML/PDF reports, roles, scheduling and backups. Includes Demo, OpenAI-compatible memory and Kimi Search + Chat providers.
+- **当前版本 / Version**：2.0.0
+- **发布日期 / Date**：2026-11-06
+- **安装 / Install**：`cd skills/geopulse && python3 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt`，再运行 `.venv/bin/python backend/run.py`；首次启动在终端显示一次性管理员密码
+- **自检 / Self-test**：在 `skills/geopulse` 运行 `.venv/bin/python -m pytest -q`；黄金集、2700 次纯模拟压力和真实浏览器验收见 [Skill 说明](skills/geopulse/SKILL.md)
+- **浏览器**：`http://127.0.0.1:8700`（项目总览 / 问题集 / 实体 / 测量 / 证据 / 机会行动 / 对比报告 / 系统管理）
+- **边界 / Limits**：单节点 SQLite；真实 DeepSeek/Kimi 外部账号 smoke 尚需按账号、模型、调用次数和费用单独确认，协议 mock 通过不等于 live 厂商验收
 
 #### weixin-connector
 - **技能名称 / Name**：ExFlower 微信连接器 / Weixin Connector for ExFlower

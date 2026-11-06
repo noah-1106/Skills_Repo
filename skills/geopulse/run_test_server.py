@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""隔离启动：测试服务器用独立 DB + 独立 config，绝不碰用户数据。"""
+"""Isolated test-server launcher; never defaults to the production database."""
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
 
-BEFORE = Path(__file__).resolve().parent / "backend"
-TEST_DB = "/tmp/geopulse_test.db"
-TEST_CFG = "/tmp/geopulse_test_config.json"
+ROOT = Path(__file__).resolve().parent
+if not os.environ.get("GEOPULSE_DB") or not os.environ.get("GEOPULSE_SECRETS"):
+    raise SystemExit("测试启动必须显式设置 GEOPULSE_DB 和 GEOPULSE_SECRETS")
+os.environ["GEOPULSE_DISABLE_WORKER"] = "1"
+sys.path.insert(0, str(ROOT / "backend"))
 
-os.environ["GEOPULSE_DB"] = TEST_DB
-os.environ["GEOPULSE_CONFIG"] = TEST_CFG
-os.environ["GEOPULSE_PORT"] = "8700"
-sys.path.insert(0, str(BEFORE))
+from app.migrations import initialize
 
-from app.engine.db_init import init
-init(seed=True)
+initialize(seed=True)
 
 import uvicorn
-from app.api.routes import app
-uvicorn.run(app, host="127.0.0.1", port=8700, log_level="warning")
+from app.main import app
+
+uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("GEOPULSE_PORT", "8701")), log_level="warning")

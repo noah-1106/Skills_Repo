@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "description": "人工编写的离线判定与来源分类小样本；用于回归，不代表真实 LLM 生产准确率。",
+  "entities": [
+    {"id": 1, "name": "GeoPulse", "role": "primary", "entity_card": {"aliases": ["Geo Pulse"], "domain": "geopulse.example"}},
+    {"id": 2, "name": "Profound", "role": "competitor", "entity_card": {"aliases": ["profound.io"]}},
+    {"id": 3, "name": "Acme", "role": "competitor", "entity_card": {}},
+    {"id": 4, "name": "Apple", "role": "competitor", "entity_card": {}},
+    {"id": 5, "name": "Mi", "role": "competitor", "entity_card": {"aliases": ["小米"]}},
+    {"id": 6, "name": "Geo", "role": "competitor", "entity_card": {"aliases": ["GeoPulse Cloud"]}}
+  ],
+  "answer_cases": [
+    {
+      "id": "description",
+      "answer": "GeoPulse 支持自托管，适合需要证据审计的团队。",
+      "expected": {"1": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "GeoPulse 支持自托管，适合需要证据审计的团队。"}}
+    },
+    {
+      "id": "positive-recommendation",
+      "answer": "在候选中，Profound 值得推荐，首选 Profound。",
+      "expected": {"2": {"mentioned": true, "depth": "recommended", "sentiment": "positive", "evidence": "在候选中，Profound 值得推荐，首选 Profound。"}}
+    },
+    {
+      "id": "negative-precedence",
+      "answer": "不建议选择 Acme，售后太差。",
+      "expected": {"3": {"mentioned": true, "depth": "mentioned", "sentiment": "negative", "evidence": "不建议选择 Acme，售后太差。"}}
+    },
+    {
+      "id": "negative-overrides-nearby-recommendation",
+      "answer": "GeoPulse 值得推荐，但不建议选择。",
+      "expected": {"1": {"mentioned": true, "depth": "mentioned", "sentiment": "negative", "evidence": "GeoPulse 值得推荐，但不建议选择。"}}
+    },
+    {
+      "id": "ordinary-description",
+      "answer": "Acme 提供数据导出。",
+      "expected": {"3": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "Acme 提供数据导出。"}}
+    },
+    {
+      "id": "no-monitored-name",
+      "answer": "这个回答没有受监测名称。",
+      "expected": {"1": {"mentioned": false, "depth": "absent", "sentiment": "unknown", "evidence": ""}}
+    },
+    {
+      "id": "latin-substrings-are-not-mentions",
+      "answer": "pineapple 与 xiaomi 只是用于检查拉丁词边界的字符串。",
+      "expected": {
+        "4": {"mentioned": false, "depth": "absent", "sentiment": "unknown", "evidence": ""},
+        "5": {"mentioned": false, "depth": "absent", "sentiment": "unknown", "evidence": ""}
+      }
+    },
+    {
+      "id": "separate-latin-names",
+      "answer": "Apple 和 Mi 都提供工具。",
+      "expected": {
+        "4": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "Apple 和 Mi 都提供工具。"},
+        "5": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "Apple 和 Mi 都提供工具。"}
+      }
+    },
+    {
+      "id": "longest-alias-owns-span",
+      "answer": "推荐使用 GeoPulse Cloud。",
+      "expected": {
+        "1": {"mentioned": false, "depth": "absent", "sentiment": "unknown", "evidence": ""},
+        "6": {"mentioned": true, "depth": "recommended", "sentiment": "positive", "evidence": "推荐使用 GeoPulse Cloud。"}
+      }
+    },
+    {
+      "id": "short-chinese-alias-still-needs-review",
+      "answer": "小米适合智能家居。",
+      "expected": {"5": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "小米适合智能家居。"}}
+    },
+    {
+      "id": "case-insensitive-spaced-alias",
+      "answer": "geo pulse 支持导出。",
+      "expected": {"1": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "geo pulse 支持导出。"}}
+    },
+    {
+      "id": "domain-alias",
+      "answer": "profound.io 提供 SaaS。",
+      "expected": {"2": {"mentioned": true, "depth": "described", "sentiment": "neutral", "evidence": "profound.io 提供 SaaS。"}}
+    }
+  ],
+  "source_cases": [
+    {"id": "official-root", "url": "https://geopulse.example/docs", "expected": "官网"},
+    {"id": "official-subdomain", "url": "https://docs.geopulse.example/guide", "expected": "官网"},
+    {"id": "official-lookalike", "url": "https://geopulse.example.evil.test/guide", "expected": "其他"},
+    {"id": "baidu-baike", "url": "https://baike.baidu.com/item/example", "expected": "百科"},
+    {"id": "wikipedia", "url": "https://zh.wikipedia.org/wiki/example", "expected": "百科"},
+    {"id": "zhihu", "url": "https://www.zhihu.com/question/1", "expected": "UGC"},
+    {"id": "zhihu-lookalike", "url": "https://zhihu.com.evil.test/question/1", "expected": "其他"},
+    {"id": "xiaohongshu", "url": "https://www.xiaohongshu.com/explore/1", "expected": "UGC"},
+    {"id": "unknown-domain", "url": "https://news.example.net/story", "expected": "其他"},
+    {"id": "missing-host", "url": "not-a-url", "expected": "其他"}
+  ],
+  "citation_cases": [
+    {
+      "id": "citation-whitelist",
+      "answer": "GeoPulse 提供证据审计。",
+      "entity_id": 1,
+      "citations": [{"url": "https://geopulse.example/docs", "title": "文档", "text": "证据审计"}],
+      "judge_item": {"entity_id": 1, "entity_status": "confirmed", "mentioned": true, "depth": "described", "sentiment": "neutral", "top_choice": false, "evidence": "GeoPulse 提供证据审计。", "citation_urls": ["https://geopulse.example/docs", "https://injected.invalid/not-returned"]},
+      "expected_urls": ["https://geopulse.example/docs"]
+    },
+    {
+      "id": "evidence-fallback-keeps-valid-citation",
+      "answer": "Profound 提供托管监测。",
+      "entity_id": 2,
+      "citations": [{"url": "https://www.zhihu.com/question/1", "title": "讨论", "text": "托管监测"}],
+      "judge_item": {"entity_id": 2, "entity_status": "confirmed", "mentioned": true, "depth": "described", "sentiment": "neutral", "top_choice": false, "evidence": "并非原文的证据", "citation_urls": ["https://www.zhihu.com/question/1"]},
+      "expected_urls": ["https://www.zhihu.com/question/1"]
+    }
+  ]
+}
