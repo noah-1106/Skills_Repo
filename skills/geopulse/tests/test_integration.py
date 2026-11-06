@@ -1,210 +1,117 @@
-#!/usr/bin/env python3
-"""GeoPulse 集成测试套件：真实起服 → 全 API 面 → 断言 → 清理。
-
-跑法：python3 tests/test_integration.py
-要求：端口 8700 可用（脚本自管服务器生命周期）。
-"""
 from __future__ import annotations
-import json
-import os
-import signal
-import sqlite3
-import subprocess
-import sys
-import time
-import urllib.request
-import urllib.error
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BACKEND = ROOT / "backend"
-TEST_DB = Path("/tmp/geopulse_test.db")
-DB = TEST_DB  # 测试永远不碰生产库（GEOPULSE_DB 环境变量注入见 run_test_server.py）
-BASE = "http://127.0.0.1:8700"
+from fastapi.testclient import TestClient
 
-PASS, FAIL = 0, 0
+from backend.app.db import connect, one
+from backend.app.main import create_app
+from conftest import ADMIN_PASSWORD, api, demo_wave, execute_run
 
 
-def check(name: str, cond: bool, detail: str = ""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {name}")
-    else:
-        FAIL += 1
-        print(f"  FAIL  {name}  {detail}")
+def test_login_me_csrf_and_project_scoped_api(client):
+    me = api(client, "GET", "/api/auth/me")
+    assert me["user"]["email"] == "admin@test.local"
+    project_id = client.project_id
+    api(client, "PUT", f"/api/projects/{project_id}/settings", expected=403,
+        headers={"X-CSRF-Token": "wrong"}, json={"settings": {"small_sample_n": 20}})
+    overview = api(client, "GET", f"/api/projects/{project_id}/overview")
+    assert overview["stage"] == "基线测量"
+    assert overview["role"] == "admin"
+    assert client.get("/").status_code == 200
+    assert "default-src 'self'" in client.get("/").headers["Content-Security-Policy"]
 
 
-def api(method: str, path: str, body=None):
-    req = urllib.request.Request(
-        BASE + path, method=method,
-        data=json.dumps(body).encode() if body else None,
-        headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read().decode())
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode())
-        except Exception:
-            return e.code, {}
+def test_non_admin_only_sees_assigned_projects(client):
+    other = api(client, "POST", "/api/projects", json={"client_name": "另一客户", "name": "隔离项目"})
+    user = api(client, "POST", "/api/users", json={"email": "viewer@test.local", "password": "viewer-password"})
+    api(client, "POST", f"/api/projects/{client.project_id}/memberships", json={"user_id": user["id"], "role": "viewer"})
+    with TestClient(create_app()) as viewer:
+        login = api(viewer, "POST", "/api/auth/login", json={"email": "viewer@test.local", "password": "viewer-password"})
+        viewer.headers["X-CSRF-Token"] = login["csrf_token"]
+        projects = api(viewer, "GET", "/api/projects")["items"]
+        assert [row["id"] for row in projects] == [client.project_id]
+        api(viewer, "GET", f"/api/projects/{other['id']}", expected=403)
+        api(viewer, "POST", f"/api/projects/{client.project_id}/prompt-sets", expected=403,
+            json={"name": "not allowed"})
+        assert "budget" not in projects[0]["settings"]
 
 
-def _free_port():
-    """杀掉占用 8700 的残留服务器（测试环境隔离）。"""
-    r = subprocess.run(["lsof", "-ti", "tcp:8700"], capture_output=True, text=True)
-    for pid in r.stdout.split():
-        try:
-            os.kill(int(pid), signal.SIGTERM)
-            time.sleep(0.5)
-        except (ProcessLookupError, ValueError):
-            pass
+def test_prompt_scaffold_dedup_review_freeze_and_copy(client):
+    project_id = client.project_id
+    prompt_set = api(client, "POST", f"/api/projects/{project_id}/prompt-sets", json={"name": "新问题集"})
+    scaffold = api(client, "POST", f"/api/projects/{project_id}/prompt-sets/scaffold/preview",
+                   json={"brand": "Acme", "category": "GEO", "competitors": ["Beta"]})["items"]
+    assert len(scaffold) == 16
+    assert len({item["canonical_intent_id"] for item in scaffold}) == 8
+    result = api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/items",
+                 json={"items": [*scaffold, scaffold[0]], "redact": True})
+    assert result["count"] == 16
+    assert len(result["duplicates"]) == 1
+    api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/status", json={"status": "reviewing"})
+    for item in result["items"]:
+        api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/items/{item['id']}/review",
+            json={"status": "reviewed", "eligibility": "eligible"})
+    frozen = api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/status", json={"status": "frozen"})
+    assert frozen["content_hash"]
+    api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/items", expected=409,
+        json={"items": scaffold[:1]})
+    copied = api(client, "POST", f"/api/projects/{project_id}/prompt-sets/{prompt_set['id']}/copy")
+    assert copied["status"] == "draft"
+    assert len(copied["items"]) == 16
 
 
-def main():
-    # ---- 1. 清场 + 起服 ----
-    _free_port()
-    if DB.exists():
-        DB.unlink()
-    cfg_path = Path("/tmp/geopulse_test_config.json")
-    cfg_bak = None
-    if cfg_path.exists():
-        cfg_bak = cfg_path.read_text(encoding="utf-8")
-        cfg_path.unlink()
-    proc = subprocess.Popen(
-        [sys.executable, str(ROOT / "run_test_server.py")], cwd=str(ROOT),
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        preexec_fn=os.setsid)
-    for _ in range(20):
-        time.sleep(0.5)
-        try:
-            urllib.request.urlopen(BASE + "/api/brands", timeout=2)
-            break
-        except Exception:
-            continue
-    else:
-        print("[FATAL] 服务器 20s 未就绪")
-        sys.exit(1)
-    print("[OK] 测试服务器就绪")
-
-    try:
-        # ---- 2. 种子与列表 ----
-        s, d = api("GET", "/api/brands")
-        check("GET brands 200 + 种子4", s == 200 and len(d["items"]) == 4, str(d))
-        s, d = api("GET", "/api/prompts")
-        check("GET prompts 200 + 种子5", s == 200 and len(d["items"]) == 5, str(d))
-
-        # ---- 3. 品牌增删 ----
-        s, d = api("POST", "/api/brands", {"name": "测试品牌X", "aliases": ["TBX"], "is_primary": False})
-        check("POST brand 200", s == 200 and d.get("id"), str(d))
-        bid = d["id"]
-        s, d = api("POST", "/api/brands", {"name": "  ", "aliases": []})
-        check("空品牌名 400", s == 400, str(d))
-        s, d = api("DELETE", f"/api/brands/{bid}")
-        check("DELETE brand 200", s == 200)
-        s, d = api("DELETE", f"/api/brands/{bid}")
-        check("重复删 404", s == 404)
-
-        # ---- 4. prompt 增删 ----
-        s, d = api("POST", "/api/prompts", {"text": "测试 prompt 一条", "intent": "测试"})
-        check("POST prompt 200", s == 200 and d.get("id"))
-        pid = d["id"]
-        s, d = api("DELETE", f"/api/prompts/{pid}")
-        check("DELETE prompt 200", s == 200)
-
-        # ---- 5. demo 监测端到端 + 金标准 ----
-        s, d = api("POST", "/api/runs", {"scope": "all"})
-        check("POST run 200 done=5(种子)", s == 200 and d.get("done") == 5, str(d))
-        s, d = api("GET", "/api/insights/overview?days=7&exclude_demo=false")
-        check("overview 有数据", s == 200 and d.get("total_prompts", 0) >= 5, str(d)[:200])
-        check("金标准：demo 可见率=100", d.get("visibility") == 100.0, str(d.get("visibility")))
-        check("金标准：SoV 主品牌>0", d.get("share_of_voice", 0) > 0, str(d.get("share_of_voice")))
-        check("金标准：无 Profound 误报", "Profound" not in json.dumps(d.get("recent", [])), "")
-
-        # ---- 6. 异常路径 ----
-        s, d = api("GET", "/api/runs/9999")
-        check("不存在 run 404", s == 404)
-
-        # ---- 7. settings key 安全 ----
-        s, d = api("PUT", "/api/settings", {"provider": {"kind": "openai_compat",
-            "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat",
-            "api_key": "test-fake-key-0000000000"}})
-        check("PUT settings 200", s == 200, str(d))
-        check("PUT 响应无明文 key", "test-fake-key" not in json.dumps(d))
-        s, d = api("GET", "/api/settings")
-        check("GET settings 无明文 key", "test-fake-key" not in json.dumps(d))
-        check("masked 存在", bool(d.get("provider", {}).get("api_key_masked")))
-        # __KEEP__ 语义：key 留空提交不覆盖
-        s, d = api("PUT", "/api/settings", {"provider": {"kind": "demo", "api_key": "__KEEP__"}})
-        cfg = json.loads(Path("/tmp/geopulse_test_config.json").read_text())
-        check("__KEEP__ 保留旧 key", cfg["provider"].get("api_key") == "test-fake-key-0000000000", str(cfg.get("provider", {}).get("api_key")))
-
-        # ---- 8. demo 配置真实跑一轮（provider 切换后）----
-        s, d = api("POST", "/api/runs", {"scope": "all"})
-        check("demo 引擎切换后 run 仍成功", s == 200 and d.get("done", 0) >= 5, str(d))
-
-        # ---- 8b. 四维矩阵 + 深度判定 + 报告导出 ----
-        s, d = api("POST", "/api/prompts", {"text": "测试品牌X 怎么样？靠谱吗", "dimension": "brand"})
-        check("带 dimension 的 prompt 200", s == 200)
-        tpid = d["id"]
-        api("DELETE", f"/api/prompts/{tpid}")
-
-        s, d = api("GET", "/api/insights/overview?days=1&exclude_demo=false")
-        check("overview 含 dimensions 字段", "dimensions" in d, str(list(d.keys())[:8]))
-        check("overview 含 depth 字段", "depth" in d)
-        check("深度判定有 recommended", d.get("depth", {}).get("recommended", 0) > 0, str(d.get("depth")))
-
-        req = urllib.request.Request(BASE + "/api/insights/report?days=1&exclude_demo=false")
-        with urllib.request.urlopen(req, timeout=10) as r:
-            rep = r.read().decode("utf-8")
-        check("报告导出含诊断标题", "诊断报告" in rep and "一句话诊断" in rep)
-        check("报告含四维热力图", "四维热力图" in rep or "维度" in rep)
-
-        # ---- 8c. 多引擎配置 ----
-        s, d = api("PUT", "/api/settings", {"engines": [
-            {"name": "demo", "kind": "demo"},
-            {"name": "demo2", "kind": "demo"}]})
-        check("多引擎保存 200", s == 200 and len(d.get("engines", [])) == 2, str(d))
-        raw = json.dumps(d)
-        check("多引擎 key 无明文", "test-fake-key" not in raw, raw[:120])
-        s, d = api("POST", "/api/runs", {"scope": "all"})
-        check("多引擎 run 总量翻倍", s == 200 and d.get("done", 0) == 10, str(d))
-        # 隔离库校验：测试从未碰生产
-        check("测试 DB 是隔离库", Path("/tmp/geopulse_test.db").exists())
-        # 分引擎断言：demo 引擎内可见率应为 100%（demo 每条都提主品牌）
-        s, d = api("GET", "/api/insights/overview?days=1&exclude_demo=false")
-        demo_eng = next((e for e in d.get("engines", []) if e["engine"] == "demo"), None)
-        check("demo 引擎可见率=100", demo_eng and demo_eng["visibility"] == 100.0, str(demo_eng))
-        s, d = api("GET", "/api/insights/overview?days=1&exclude_demo=false")
-        eng_names = [e["engine"] for e in d.get("engines", [])]
-        check("overview 分引擎统计", "demo" in eng_names and "demo2" in eng_names, str(eng_names))
-        s, d = api("GET", "/api/insights/overview?days=1")
-        demo_in = any(e["engine"].startswith("demo") for e in d.get("engines", []))
-        check("指标默认排除 demo 引擎", not demo_in, str(d.get("engines")))
-        s, d = api("GET", "/api/insights/overview?days=1&exclude_demo=false")
-        check("exclude_demo=false 可看 demo", "total_prompts" in d)
-        # 还原单引擎
-        api("PUT", "/api/settings", {"engines": [{"name": "demo", "kind": "demo"}]})
-    finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        time.sleep(1)
-        if cfg_bak is not None:
-            cfg_path.write_text(cfg_bak, encoding="utf-8")
-
-    # ---- 9. config 权限（隔离 config）----
-    test_cfg = Path("/tmp/geopulse_test_config.json")
-    mode = oct(test_cfg.stat().st_mode)[-3:]
-    check("config.json 0600", mode == "600", mode)
-    # backend（skill 内分发副本）不被测试写入任何 config
-    check("backend 未被测试写入 config", not (BACKEND / "config.json").exists())
-
-    print()
-    print(f"════ 结果：{PASS} PASS / {FAIL} FAIL ════")
-    sys.exit(1 if FAIL else 0)
+def test_demo_measurement_evidence_revision_and_report_workflow(client, official_demo):
+    wave_id, run_id = official_demo
+    project_id = client.project_id
+    metrics = api(client, "GET", f"/api/projects/{project_id}/runs/{run_id}/metrics")
+    assert metrics["quality"]["valid_samples"] == 8
+    assert metrics["is_demo"] is True
+    assert metrics["share_of_voice"]["value"] == 50
+    answers = api(client, "GET", f"/api/projects/{project_id}/runs/{run_id}/answers")
+    assert answers["total"] == 8
+    detail = api(client, "GET", f"/api/projects/{project_id}/answers/{answers['items'][0]['id']}")
+    observation = detail["observations"][0]
+    evidence = next((part for part in detail["raw_text"].split("。") if observation["name"] in part), detail["raw_text"][:20])
+    revision = api(client, "POST", f"/api/projects/{project_id}/answers/{detail['id']}/observations/{observation['id']}/revisions",
+                   json={"entity_status": "confirmed", "mentioned": True, "depth": "described", "sentiment": "neutral",
+                         "evidence": evidence, "reason": "自动化复核", "arbitrate": True})
+    with connect() as conn:
+        stored = one(conn, "SELECT * FROM observations WHERE id=?", (revision["id"],))
+        assert stored["project_id"] == project_id
+        assert stored["client_id"] == detail["client_id"]
+        assert stored["revision"] == observation["revision"] + 1
+        assert one(conn, "SELECT raw_text FROM answers WHERE id=?", (detail["id"],))["raw_text"] == detail["raw_text"]
+    report = api(client, "POST", f"/api/projects/{project_id}/reports", json={"wave_ids": [wave_id]})
+    for status in ("data_checked", "strategy_reviewed", "client_approved"):
+        api(client, "POST", f"/api/projects/{project_id}/reports/{report['id']}/status", json={"status": status})
+    client_html = client.get(f"/api/projects/{project_id}/reports/{report['id']}/export?variant=client&format=html").text
+    internal_html = client.get(f"/api/projects/{project_id}/reports/{report['id']}/export?variant=internal&format=html").text
+    assert "内部成本与质量" not in client_html
+    assert "原始回答与判定" not in client_html
+    assert "内部成本与质量" in internal_html
+    assert "原始回答与判定" in internal_html
+    assert "草稿 · 尚未完成客户审批" not in client_html  # approval chrome follows current workflow state
+    detail = api(client, "GET", f"/api/projects/{project_id}/reports/{report['id']}")
+    assert "覆盖率较低" not in detail["snapshot"]["diagnosis"]
+    assert "覆盖率最低" not in detail["snapshot"]["diagnosis"]  # every measured dimension is 100%
 
 
-if __name__ == "__main__":
-    main()
+def test_empty_report_is_explicitly_blocked_from_approval(client):
+    wave = demo_wave(client)
+    report = api(client, "POST", f"/api/projects/{client.project_id}/reports", json={"wave_ids": [wave["id"]]})
+    detail = api(client, "GET", f"/api/projects/{client.project_id}/reports/{report['id']}")
+    assert detail["snapshot"]["waves"][0]["run"] is None
+    assert "无有效样本" in detail["snapshot"]["diagnosis"]
+    assert detail["gates"]
+    api(client, "POST", f"/api/projects/{client.project_id}/reports/{report['id']}/status", expected=409,
+        json={"status": "data_checked"})
+
+
+def test_cancel_run_finalizes_run_and_wave(client):
+    wave = demo_wave(client, repeats=2)
+    run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs")["run"]
+    api(client, "POST", f"/api/projects/{client.project_id}/runs/{run['id']}/cancel")
+    current = api(client, "GET", f"/api/projects/{client.project_id}/runs/{run['id']}")
+    assert current["status"] == "cancelled"
+    assert current["progress"]["by_status"]["cancelled"] == 16
+    with connect() as conn:
+        assert one(conn, "SELECT status FROM waves WHERE id=?", (wave["id"],))["status"] == "data_ready_with_warnings"

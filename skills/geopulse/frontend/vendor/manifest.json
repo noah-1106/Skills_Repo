@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-11-06",
+  "artifacts": [
+    {
+      "name": "Apache ECharts",
+      "version": "5.5.0",
+      "file": "echarts.min.js",
+      "source": "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js",
+      "upstream": "https://github.com/apache/echarts/tree/5.5.0",
+      "license": "Apache-2.0",
+      "license_file": "echarts.LICENSE.txt",
+      "notice_file": "NOTICE.txt",
+      "bytes": 1029203,
+      "sha256": "42f8329d989b6f6539dd2b15bbdf0d82025762ac112fbb60dc57b27d7bcf3946",
+      "modified": false
+    }
+  ]
+}

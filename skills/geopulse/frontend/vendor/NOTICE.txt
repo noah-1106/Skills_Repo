@@ -1,0 +1,12 @@
+GeoPulse includes Apache ECharts 5.5.0.
+
+Apache ECharts
+Copyright The Apache Software Foundation and contributors.
+Licensed under the Apache License, Version 2.0.
+
+The unmodified distribution is stored as echarts.min.js.
+Upstream: https://github.com/apache/echarts/tree/5.5.0
+Distribution source: https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js
+
+See echarts.LICENSE.txt for the full license and manifest.json for the
+recorded source, byte size, and SHA-256 integrity value.

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>GeoPulse · {{ snapshot.project.name }} · GEO 报告</title>
+<style>
+@page{size:A4;margin:14mm 12mm}*{box-sizing:border-box}body{margin:0;color:#17231f;background:#fff;font:13px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:900px;margin:auto}header{border-bottom:3px solid #146c60;padding:24px 0 18px;margin-bottom:22px}h1{font-size:26px;line-height:1.35;margin:0 0 8px}h2{font-size:18px;margin:30px 0 10px;border-left:4px solid #146c60;padding-left:10px;break-after:avoid}h3{font-size:14px;margin:20px 0 8px}p{margin:6px 0}.muted{color:#5e6b65}.warning{background:#fff7e6;border-left:4px solid #b87516;padding:12px 14px;margin:14px 0}.draft{font-weight:700;color:#a43d3d}.protocol{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.protocol span{border:1px solid #b9c8c1;padding:2px 7px;border-radius:3px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric{border-top:2px solid #146c60;background:#f3f7f5;padding:10px}.metric b{display:block;font-size:22px}.metric small{display:block;color:#5e6b65}table{width:100%;border-collapse:collapse;margin:10px 0 18px;break-inside:auto}tr{break-inside:avoid}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d9e1dc;padding:8px}th{color:#46564f;background:#f3f7f5}.evidence{background:#f5f7f6;padding:10px 12px;margin:8px 0;white-space:pre-wrap;word-break:break-word}.cost{font-variant-numeric:tabular-nums}.footer{margin-top:34px;padding-top:12px;border-top:1px solid #cad4ce;color:#5e6b65;font-size:11px}@media(max-width:600px){.metrics{grid-template-columns:1fr 1fr}table{font-size:11px}}@media print{header{margin-top:0}.no-print{display:none}}
+</style>
+</head>
+<body><main>
+<header>
+  <h1>{{ snapshot.project.name }} · GEO {{ '效果对比' if snapshot.comparison else '引用现状诊断' }}报告</h1>
+  <div class="muted">{{ snapshot.project.category }} · {{ snapshot.project.market }} · {{ snapshot.project.timezone }} · 快照 {{ snapshot.generated_at }}</div>
+  {% if not internal %}<div class="muted">客户版 · 仅陈述已审核数据与证据</div>{% else %}<div class="muted">内部版 · 含原始回答、判定质量与成本</div>{% endif %}
+  {% if snapshot.approval_status and snapshot.approval_status not in ['client_approved','sent'] %}<div class="draft">草稿 · 尚未完成客户审批</div>{% endif %}
+</header>
+
+<section>
+<h2>执行摘要</h2>
+<p>{{ snapshot.diagnosis }}</p>
+<p class="warning">{{ snapshot.causal_boundary }}</p>
+</section>
+
+{% for wave in snapshot.waves %}
+<section>
+<h2>{{ wave.wave.label }} · 测量口径</h2>
+<div class="protocol">
+  <span>{% if wave.run %}正式 Run {{ wave.run.id }}{% else %}尚未指定正式 Run{% endif %}</span><span>{{ wave.protocol.mode }}</span><span>{{ wave.protocol.measurement_target }}</span>
+  <span>{{ wave.protocol.repeats }} 轮</span><span>Judge {{ wave.protocol.judge_version }}</span><span>问题集 {{ wave.protocol.prompt_set_hash[:10] }}</span>
+  <span>实体版本 {{ wave.protocol.entity_version[:10] }}</span>
+</div>
+<p class="muted">{% for engine in wave.protocol.engine_signature %}{{ engine.name }} / {{ engine.model }}{{ '；' if not loop.last }}{% endfor %}</p>
+<div class="metrics">
+  {% for key,label in [('coverage','覆盖率'),('hit_rate','稳定命中率'),('effective_recommendation_rate','有效推荐率'),('north_star','有效推荐覆盖（北极星）'),('negative_risk_rate','负面风险率')] %}
+  {% set metric=wave.metrics[key] %}<div class="metric"><span>{{ label }}</span><b>{{ metric.value }}%</b><small>{{ metric.hits }}/{{ metric.n }} · Wilson {{ metric.ci_low }}–{{ metric.ci_high }}%{% if metric.limited %} · 样本不足{% endif %}</small></div>
+  {% endfor %}
+  <div class="metric"><span>声量份额 SoV</span><b>{{ wave.metrics.share_of_voice.value }}%</b><small>{{ wave.metrics.share_of_voice.n }} 条有效回答 · 每回答归一</small></div>
+</div>
+<p class="warning">{{ wave.metrics.limitations|join('；') or '未发现自动口径警告；仍需人工审核。' }}</p>
+<h3>四维表现</h3>
+<table><thead><tr><th>维度</th><th>覆盖率</th><th>原始计数</th><th>有效回答</th></tr></thead><tbody>
+{% for row in wave.metrics.dimensions %}<tr><td>{{ row.key }}</td><td>{{ row.coverage.value }}%</td><td>{{ row.coverage.hits }}/{{ row.coverage.n }}</td><td>{{ row.samples }}</td></tr>{% endfor %}
+</tbody></table>
+<h3>竞品池内表现</h3>
+<table><thead><tr><th>品牌</th><th>确认提及</th><th>SoV</th><th>负面</th><th>证据示例</th></tr></thead><tbody>
+{% for row in wave.metrics.competitors %}<tr><td>{{ row.name }}</td><td>{{ row.mentions }}</td><td>{{ row.sov }}%</td><td>{{ row.negative }}</td><td>{{ row.evidence[0] if row.evidence else '—' }}</td></tr>{% endfor %}
+</tbody></table>
+{% if wave.protocol.mode == 'memory' %}<p class="muted">本 wave 为模型 API 记忆态，未暴露可核验 URL，不计算来源引用率。</p>{% elif wave.metrics.citation_rate %}<p>来源引用率：{{ wave.metrics.citation_rate.hits }}/{{ wave.metrics.citation_rate.n }}（{{ wave.metrics.citation_rate.value }}%）。</p>{% endif %}
+{% if loop.last and snapshot.source_structure %}<h3>来源结构</h3><table><thead><tr><th>来源类型</th><th>域名</th><th>关联实体</th><th>引用 / 去重来源</th></tr></thead><tbody>{% for row in snapshot.source_structure %}<tr><td>{{ row.source_type }}</td><td>{{ row.domain }}</td><td>{{ row.entity_role }}</td><td>{{ row.citations }} / {{ row.unique_sources }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</section>
+{% endfor %}
+
+{% if snapshot.comparison %}
+<section><h2>效果对比</h2>
+{% if snapshot.comparison.comparable %}
+<p>配对完整度 {{ snapshot.comparison.pair_completeness }}%。{% if snapshot.comparison.exploratory %}模型返回版本变化，以下为探索性比较。{% endif %}</p>
+<table><thead><tr><th>指标</th><th>基线</th><th>复测</th><th>变化（pp）</th></tr></thead><tbody>
+{% for key,row in snapshot.comparison.delta.items() %}<tr><td>{{ key }}</td><td>{{ row.baseline.value }}%</td><td>{{ row.current.value }}%</td><td>{{ row.pp }}</td></tr>{% endfor %}
+</tbody></table>
+<p>持续提及 {{ snapshot.comparison.transition_counts['持续提及'] }} · 持续缺席 {{ snapshot.comparison.transition_counts['持续缺席'] }} · 新增提及 {{ snapshot.comparison.transition_counts['新增提及'] }} · 失去提及 {{ snapshot.comparison.transition_counts['失去提及'] }}</p>
+<table><thead><tr><th>意图</th><th>引擎</th><th>迁移</th></tr></thead><tbody>{% for row in snapshot.comparison.transitions %}<tr><td>{{ row.prompt_text }}</td><td>{{ row.engine_config_id }}</td><td>{{ row.change }}</td></tr>{% endfor %}</tbody></table>
+{% else %}<p class="warning">{{ snapshot.comparison.reason }}</p>{% endif %}
+</section>{% endif %}
+
+<section><h2>已确认机会与七步行动</h2>
+{% if snapshot.opportunities %}<table><thead><tr><th>问题</th><th>缺口</th><th>适用性</th><th>评分</th><th>证据</th></tr></thead><tbody>
+{% for row in snapshot.opportunities %}<tr><td>{{ row.prompt_text }}</td><td>{{ row.gap_type }}</td><td>{{ row.eligibility }}</td><td>{{ row.score }}</td><td>{{ row.evidence.evidence[0].evidence if row.evidence.evidence else '见原始回答' }}</td></tr>{% endfor %}</tbody></table>{% else %}<p>暂无经管理员确认的机会。候选缺口不会自动进入客户报告。</p>{% endif %}
+{% set published=snapshot.actions|selectattr('published_at')|selectattr('published_url')|list %}{% if published %}<h3>已发布动作（共时事件）</h3><ul>{% for action in published %}<li>Step {{ action.geo_step }} · {{ action.title }} · {{ action.published_at }} · {{ action.published_url }}</li>{% endfor %}</ul>{% endif %}
+</section>
+
+{% if internal %}
+<section><h2>内部成本与质量</h2><p class="cost">成本：{{ snapshot.costs.amount }}（{% if snapshot.costs.unknown %}部分价格未知{% else %}按已配置价格{% endif %}）· 分类 {{ snapshot.costs.by_kind }}</p></section>
+{% if snapshot.internal_samples %}<section><h2>原始回答与判定</h2>{% for sample in snapshot.internal_samples %}<article><h3>#{{ sample.id }} · {{ sample.prompt_text }} · {{ sample.engine_name }} · Round {{ sample.round_no }}</h3><div class="evidence">{{ sample.raw_text }}</div><table><tbody>{% for obs in sample.observations %}<tr><td>{{ obs.name }}</td><td>{{ obs.entity_status }} / {{ obs.depth }} / {{ obs.sentiment }}</td><td>{{ obs.evidence }}</td><td>{{ obs.judge_status }} r{{ obs.revision }}</td></tr>{% endfor %}</tbody></table></article>{% endfor %}</section>{% endif %}
+{% endif %}
+
+<footer>GeoPulse 自托管测量 · 报告快照 {{ snapshot.data_snapshot_hash if snapshot.data_snapshot_hash else '创建时冻结' }}<br>自动检查不等于人工审批；不承诺排名或引用率，不将 API 结果表述为消费者产品端实际回答。</footer>
+</main></body></html>

@@ -1,0 +1,483 @@
+"""Wave/run creation, persistent execution and evidence loading."""
+from __future__ import annotations
+
+import hashlib
+import math
+import threading
+import time
+import urllib.parse
+from collections import Counter
+from contextlib import contextmanager
+from typing import Any
+
+from fastapi import HTTPException
+
+from .. import config
+from ..db import all_rows, connect, dumps, loads, one, transaction, utc_now
+from ..engine.judge import JUDGE_VERSION, fallback_observations, judge_answer
+from ..providers import ProviderError, build_provider
+from ..security import SecretStore, audit
+from .state import logical_id
+
+VALID_SAMPLE_DEFINITION = "succeeded_nonempty_v1"
+_ENGINE_LOCKS: dict[int, threading.Lock] = {}
+_ENGINE_LOCKS_GUARD = threading.Lock()
+_LAST_CALL: dict[int, float] = {}
+
+
+@contextmanager
+def _engine_slot(engine: dict):
+    """Serialize each engine and apply its configured requests/second limit."""
+    with _ENGINE_LOCKS_GUARD:
+        lock = _ENGINE_LOCKS.setdefault(int(engine["id"]), threading.Lock())
+    with lock:
+        interval = 1 / max(0.1, float(engine.get("rate_limit") or 12))
+        wait = interval - (time.monotonic() - _LAST_CALL.get(int(engine["id"]), 0.0))
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_CALL[int(engine["id"])] = time.monotonic()
+        yield
+
+
+def engine_public(row: dict) -> dict:
+    result = dict(row)
+    result.pop("secret_ref", None)
+    result["cost_rule"] = loads(result.pop("cost_rule_json", "{}"), {})
+    result["has_api_key"] = bool(row.get("secret_ref"))
+    return result
+
+
+def entity_public(row: dict) -> dict:
+    result = dict(row)
+    result["entity_card"] = loads(result.pop("entity_card_json", "{}"), {})
+    return result
+
+
+def prompt_set_content(conn, prompt_set_id: int) -> list[dict]:
+    rows = all_rows(conn, "SELECT * FROM prompt_items WHERE prompt_set_id=? ORDER BY id", (prompt_set_id,))
+    for row in rows:
+        row["fields"] = loads(row.pop("fields_json"), {})
+    return rows
+
+
+def create_wave(project: dict, actor: int, payload: dict) -> dict:
+    with transaction() as conn:
+        prompt_set = one(conn, "SELECT * FROM prompt_sets WHERE id=? AND project_id=? AND client_id=?",
+                         (payload["prompt_set_id"], project["id"], project["client_id"]))
+        if not prompt_set or prompt_set["status"] != "frozen":
+            raise HTTPException(409, "请先审核并冻结问题集")
+        items = prompt_set_content(conn, prompt_set["id"])
+        if not items:
+            raise HTTPException(409, "冻结问题集没有题目")
+        engine_ids = sorted(set(int(value) for value in payload["engine_ids"]))
+        engines = [one(conn, "SELECT * FROM engine_configs WHERE id=? AND project_id=? AND client_id=? AND enabled=1",
+                       (engine_id, project["id"], project["client_id"])) for engine_id in engine_ids]
+        if not engines or any(engine is None for engine in engines):
+            raise HTTPException(400, "至少选择一个当前项目已启用的引擎")
+        modes = {engine["mode"] for engine in engines}
+        targets = {engine["measurement_target"] for engine in engines}
+        if len(modes) != 1 or len(targets) != 1:
+            raise HTTPException(409, "同一 wave 不能混合 memory/search 或 API/产品端口径")
+        entities = [entity_public(row) for row in all_rows(
+            conn, "SELECT * FROM brand_entities WHERE project_id=? AND client_id=? AND status='confirmed' AND role IN ('primary','competitor') AND valid_to IS NULL ORDER BY role,name",
+            (project["id"], project["client_id"]))]
+        if not any(entity["role"] == "primary" for entity in entities):
+            raise HTTPException(409, "需要管理员先确认一个主品牌实体")
+        entity_ids = [entity["id"] for entity in entities]
+        entity_version = hashlib.sha256(dumps([{key: value for key, value in entity.items() if key != "reviewed_by"}
+                                                for entity in entities]).encode()).hexdigest()
+        competitor_pool_hash = hashlib.sha256(dumps(sorted(
+            entity["id"] for entity in entities if entity["role"] == "competitor")).encode()).hexdigest()
+        settings = {**config.DEFAULT_PROJECT_SETTINGS, **loads(project["settings_json"], {})}
+        stats = {**settings, **(payload.get("stats") or {})}
+        repeats = int(payload.get("repeats") or stats.get("repeats", 3))
+        if repeats < 1 or repeats > 5:
+            raise HTTPException(400, "采样轮数必须在 1–5 之间")
+        if not 0.5 <= float(stats.get("min_pair_completeness", 0.9)) <= 1:
+            raise HTTPException(400, "配对完整度阈值必须在 50%–100% 之间")
+        engine_signature = [{"id": engine["id"], "name": engine["name"], "kind": engine["kind"],
+                             "model": engine["model"], "mode": engine["mode"],
+                             "measurement_target": engine["measurement_target"]} for engine in engines]
+        protocol = {
+            "prompt_set_id": prompt_set["id"], "prompt_set_hash": prompt_set["content_hash"],
+            "prompt_item_ids": [item["id"] for item in items], "entity_ids": entity_ids,
+            "entity_version": entity_version, "competitor_pool_hash": competitor_pool_hash,
+            "engine_ids": engine_ids, "engine_signature": engine_signature,
+            "repeats": repeats, "temperature": float(payload.get("temperature", 0.2)),
+            "system_prompt": payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。",
+            "max_tokens": int(payload.get("max_tokens", 700)), "language": project["language"],
+            "market": project["market"], "judge_version": JUDGE_VERSION, "mode": modes.pop(),
+            "measurement_target": targets.pop(), "valid_sample_definition": VALID_SAMPLE_DEFINITION,
+            "stratum_weights": loads(prompt_set["weights_json"], {}),
+            "max_safe_retries": int(payload.get("max_safe_retries", 2)),
+            "use_judge": bool(payload.get("use_judge", True)), "reported_model_versions": {
+                str(engine["id"]): engine["model"] for engine in engines},
+        }
+        now = utc_now()
+        wave_id = conn.execute("INSERT INTO waves(client_id,project_id,prompt_set_id,entity_version,label,anchor_at,protocol_json,stats_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                               (project["client_id"], project["id"], prompt_set["id"], entity_version,
+                                payload["label"].strip(), payload.get("anchor_at") or now,
+                                dumps(protocol), dumps(stats), now)).lastrowid
+        wave = one(conn, "SELECT * FROM waves WHERE id=?", (wave_id,))
+        audit(conn, actor, project, "wave", wave_id, "create", None, wave)
+        return wave
+
+
+def estimate_wave(conn, wave: dict) -> dict:
+    protocol = loads(wave["protocol_json"], {})
+    prompts = len(protocol.get("prompt_item_ids") or [])
+    engines = protocol.get("engine_signature") or []
+    repeats = int(protocol.get("repeats") or 1)
+    answer_calls = prompts * len(engines) * repeats
+    judge_calls = answer_calls if protocol.get("use_judge") else 0
+    search_calls = answer_calls if protocol.get("mode") == "search" else 0
+    costs = []
+    amount = 0.0
+    unknown_price = False
+    for engine in engines:
+        row = one(conn, "SELECT cost_rule_json FROM engine_configs WHERE id=?", (engine["id"],))
+        rule = loads(row["cost_rule_json"] if row else {}, {})
+        calls = prompts * repeats
+        estimated_input = calls * int(rule.get("estimated_input_tokens", 1200))
+        estimated_output = calls * int(rule.get("estimated_output_tokens", protocol.get("max_tokens", 700)))
+        if not rule or ("input_per_million" not in rule and "search_per_call" not in rule):
+            unknown_price = True
+            continue
+        value = (estimated_input / 1_000_000 * float(rule.get("input_per_million", 0)) +
+                 estimated_output / 1_000_000 * float(rule.get("output_per_million", 0)))
+        if protocol.get("use_judge"):
+            value += calls * (float(rule.get("judge_input_per_million", rule.get("input_per_million", 0))) * 2500 / 1_000_000 +
+                              float(rule.get("judge_output_per_million", rule.get("output_per_million", 0))) * 700 / 1_000_000)
+        if protocol.get("mode") == "search":
+            value += calls * float(rule.get("search_per_call", 0))
+        amount += value
+        costs.append({"engine": engine["name"], "estimated_cost": round(value, 4),
+                      "currency": rule.get("currency", "CNY")})
+    return {"prompt_items": prompts, "engines": len(engines), "repeats": repeats,
+            "answer_calls": answer_calls, "judge_calls": judge_calls, "search_calls": search_calls,
+            "total_external_calls": answer_calls + judge_calls + search_calls,
+            "estimated_cost": round(amount, 4) if not unknown_price else None,
+            "cost_unknown": unknown_price, "by_engine": costs,
+            "blocking": False, "note": "仅为上限估算，默认不拦截；未知价格不按零成本处理。"}
+
+
+def create_run(project: dict, wave: dict, actor: int) -> dict:
+    protocol = loads(wave["protocol_json"], {})
+    with transaction() as conn:
+        attempt = (one(conn, "SELECT MAX(attempt_no) AS value FROM runs WHERE wave_id=?", (wave["id"],))["value"] or 0) + 1
+        prompts = prompt_set_content(conn, protocol["prompt_set_id"])
+        engines = all_rows(conn, f"SELECT * FROM engine_configs WHERE id IN ({','.join('?' * len(protocol['engine_ids']))})",
+                           protocol["engine_ids"])
+        entities = [entity_public(row) for row in all_rows(conn,
+            f"SELECT * FROM brand_entities WHERE id IN ({','.join('?' * len(protocol['entity_ids']))})", protocol["entity_ids"])]
+        snapshot = {"protocol": protocol, "prompts": prompts, "engines": [engine_public(engine) for engine in engines],
+                    "entities": entities, "created_at": utc_now()}
+        run_id = conn.execute("INSERT INTO runs(client_id,project_id,wave_id,attempt_no,status,snapshot_json,started_at) VALUES(?,?,?,?,'queued',?,?)",
+                              (project["client_id"], project["id"], wave["id"], attempt, dumps(snapshot), utc_now())).lastrowid
+        now = utc_now()
+        conn.executemany("INSERT INTO answers(client_id,project_id,run_id,prompt_item_id,engine_config_id,round_no,created_at) VALUES(?,?,?,?,?,?,?)",
+                         [(project["client_id"], project["id"], run_id, item["id"], engine["id"], round_no, now)
+                          for engine in engines for item in prompts for round_no in range(1, int(protocol["repeats"]) + 1)])
+        conn.execute("UPDATE waves SET status='running' WHERE id=? AND status IN ('planned','data_ready','data_ready_with_warnings','analyzed')",
+                     (wave["id"],))
+        audit(conn, actor, project, "run", run_id, "create", None, {"wave_id": wave["id"], "attempt_no": attempt})
+        return one(conn, "SELECT * FROM runs WHERE id=?", (run_id,))
+
+
+def run_progress(conn, run_id: int) -> dict:
+    counts = {row["status"]: row["count"] for row in conn.execute(
+        "SELECT status,COUNT(*) AS count FROM answers WHERE run_id=? GROUP BY status", (run_id,))}
+    total = sum(counts.values())
+    finished = sum(counts.get(status, 0) for status in ("succeeded", "failed", "cancelled"))
+    return {"total": total, "finished": finished, "progress": round(finished / total * 100, 1) if total else 0,
+            "by_status": counts}
+
+
+def _next_attempt(conn, answer_id: int, kind: str) -> int:
+    row = one(conn, "SELECT MAX(attempt_no) AS value FROM call_attempts WHERE answer_id=? AND kind=?", (answer_id, kind))
+    return int(row["value"] or 0) + 1
+
+
+def _cost(rule: dict, operation: dict) -> float | None:
+    if not rule:
+        return None
+    usage = operation.get("usage") or {}
+    kind = operation["kind"]
+    if kind == "search":
+        return float(rule.get("search_per_call", 0)) * int(usage.get("search_calls", 1))
+    input_tokens = int(usage.get("prompt_tokens") or 0)
+    output_tokens = int(usage.get("completion_tokens") or 0)
+    prefix = "judge_" if kind == "judge" else ""
+    return (input_tokens / 1_000_000 * float(rule.get(prefix + "input_per_million", rule.get("input_per_million", 0))) +
+            output_tokens / 1_000_000 * float(rule.get(prefix + "output_per_million", rule.get("output_per_million", 0))))
+
+
+def _record_operations(conn, answer_id: int, operations: list[dict], rule: dict, failure: dict | None = None) -> dict:
+    aggregate = Counter()
+    for operation in operations:
+        usage = operation.get("usage") or {}
+        for key in ("prompt_tokens", "completion_tokens", "search_calls"):
+            aggregate[key] += int(usage.get(key) or 0)
+        conn.execute("INSERT OR IGNORE INTO call_attempts(answer_id,kind,attempt_no,status,request_id,model,latency_ms,usage_json,cost,error_type,error_detail,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (answer_id, operation["kind"], _next_attempt(conn, answer_id, operation["kind"]),
+                      operation.get("status", "succeeded"), operation.get("request_id"), operation.get("model"),
+                      operation.get("latency_ms"), dumps(usage), _cost(rule, operation),
+                      operation.get("error_type"), operation.get("error_detail"), utc_now()))
+    if failure:
+        kind = failure.get("kind", "answer")
+        conn.execute("INSERT OR IGNORE INTO call_attempts(answer_id,kind,attempt_no,status,error_type,error_detail,created_at) VALUES(?,?,?,'failed',?,?,?)",
+                     (answer_id, kind, _next_attempt(conn, answer_id, kind), failure.get("error_type"),
+                      failure.get("error_detail"), utc_now()))
+    return dict(aggregate)
+
+
+def _classify_source(url: str, primary: dict, settings: dict) -> str:
+    domain = urllib.parse.urlparse(url).hostname or ""
+    primary_domain = (primary.get("entity_card") or {}).get("domain", "")
+    if primary_domain and (domain == primary_domain or domain.endswith("." + primary_domain)):
+        return "官网"
+    for configured, category in (settings.get("source_domains") or {}).items():
+        if domain == configured or domain.endswith("." + configured):
+            return category
+    return "其他"
+
+
+def _insert_citations(conn, answer: dict, citations: list[dict], observations: list[dict], primary: dict, settings: dict) -> None:
+    observation_by_url = {}
+    for observation in observations:
+        for url in observation.get("citation_urls") or []:
+            observation_by_url.setdefault(url, []).append(observation.get("db_id"))
+    for citation in citations:
+        url = citation.get("url") or ""
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            continue
+        content_hash = hashlib.sha256((citation.get("title", "") + citation.get("text", "")).encode()).hexdigest()
+        linked = observation_by_url.get(url) or []
+        conn.execute("INSERT OR IGNORE INTO citations(client_id,project_id,answer_id,observation_id,raw_url,final_url,title,domain,source_type,content_hash,returned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (answer["client_id"], answer["project_id"], answer["id"], linked[0] if len(linked) == 1 else None,
+                      url, citation.get("final_url") or "", citation.get("title") or "", parsed.hostname,
+                      _classify_source(url, primary, settings), content_hash, utc_now()))
+
+
+def _insert_discovered(conn, answer: dict, discovered: list[dict], actor: int | None = None) -> None:
+    existing = {row["name"].casefold() for row in conn.execute("SELECT name FROM brand_entities WHERE project_id=?", (answer["project_id"],))}
+    for item in discovered:
+        if item["name"].casefold() in existing:
+            continue
+        now = utc_now()
+        conn.execute("INSERT INTO brand_entities(client_id,project_id,logical_id,role,name,entity_card_json,version,valid_from,status,created_at) VALUES(?,?,?,'candidate',?,?,1,?,'pending_review',?)",
+                     (answer["client_id"], answer["project_id"], logical_id("discovered"), item["name"],
+                      dumps({"aliases": item.get("aliases") or [], "category": item.get("category") or "",
+                             "evidence": item.get("evidence") or ""}), now, now))
+        existing.add(item["name"].casefold())
+
+
+def _store_observations(conn, answer: dict, observations: list[dict], actor: int | None = None) -> list[dict]:
+    stored = []
+    for observation in observations:
+        cursor = conn.execute("INSERT OR IGNORE INTO observations(client_id,project_id,answer_id,brand_entity_id,revision,entity_status,mentioned,depth,sentiment,top_choice,evidence,citation_urls_json,discovered_json,judge_status,judge_meta_json,review_status,review_reason,reviewer_id,created_at) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                              (answer["client_id"], answer["project_id"], answer["id"], observation["brand_entity_id"],
+                               observation["entity_status"], observation.get("mentioned", 0), observation.get("depth", "absent"),
+                               observation.get("sentiment", "unknown"), observation.get("top_choice", 0),
+                               observation.get("evidence") or "", dumps(observation.get("citation_urls") or []),
+                               dumps(observation.get("discovered") or []), observation.get("judge_status") or "unknown",
+                               dumps(observation.get("judge_meta") or {}), observation.get("review_status") or "machine",
+                               observation.get("review_reason") or "", actor, utc_now()))
+        stored.append({**observation, "db_id": cursor.lastrowid})
+    return stored
+
+
+def _answer_context(conn, answer_id: int) -> dict | None:
+    answer = one(conn, "SELECT a.*,r.wave_id,r.snapshot_json,r.cancel_requested,w.protocol_json,p.settings_json FROM answers a JOIN runs r ON r.id=a.run_id JOIN waves w ON w.id=r.wave_id JOIN projects p ON p.id=a.project_id WHERE a.id=?", (answer_id,))
+    if not answer:
+        return None
+    answer["protocol"] = loads(answer["protocol_json"], {})
+    answer["snapshot"] = loads(answer["snapshot_json"], {})
+    answer["settings"] = loads(answer["settings_json"], {})
+    answer["engine"] = one(conn, "SELECT * FROM engine_configs WHERE id=?", (answer["engine_config_id"],))
+    answer["prompt"] = one(conn, "SELECT * FROM prompt_items WHERE id=?", (answer["prompt_item_id"],))
+    answer["entities"] = [entity_public(row) for row in all_rows(conn,
+        f"SELECT * FROM brand_entities WHERE id IN ({','.join('?' * len(answer['protocol']['entity_ids']))})",
+        answer["protocol"]["entity_ids"])]
+    return answer
+
+
+def _claim_answer() -> dict | None:
+    with transaction() as conn:
+        row = one(conn, "SELECT a.id,a.run_id FROM answers a JOIN runs r ON r.id=a.run_id WHERE a.status IN ('queued','judging') AND r.cancel_requested=0 AND r.status IN ('queued','running') ORDER BY a.id LIMIT 1")
+        if not row:
+            return None
+        current = one(conn, "SELECT status,raw_text FROM answers WHERE id=?", (row["id"],))
+        conn.execute("UPDATE answers SET status=? WHERE id=?", ("judging" if current["raw_text"] else "running", row["id"]))
+        conn.execute("UPDATE runs SET status='running',started_at=COALESCE(started_at,?) WHERE id=?", (utc_now(), row["run_id"]))
+        return row
+
+
+def _finalize_run(conn, run_id: int) -> None:
+    remaining = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('queued','running','judging')", (run_id,))["count"]
+    if remaining:
+        return
+    counts = {row["status"]: row["count"] for row in conn.execute("SELECT status,COUNT(*) AS count FROM answers WHERE run_id=? GROUP BY status", (run_id,))}
+    run = one(conn, "SELECT * FROM runs WHERE id=?", (run_id,))
+    succeeded = counts.get("succeeded", 0)
+    if run["cancel_requested"]:
+        status = "cancelled"
+    elif succeeded == 0:
+        status = "failed"
+    elif counts.get("failed", 0) or counts.get("cancelled", 0):
+        status = "partial"
+    else:
+        status = "done"
+    snapshot = loads(run["snapshot_json"], {})
+    reported = {str(row["engine_config_id"]): row["model"] for row in conn.execute(
+        "SELECT DISTINCT engine_config_id,model FROM answers WHERE run_id=? AND model IS NOT NULL", (run_id,))}
+    snapshot.setdefault("protocol", {})["reported_model_versions"] = reported
+    conn.execute("UPDATE runs SET status=?,finished_at=?,snapshot_json=? WHERE id=?", (status, utc_now(), dumps(snapshot), run_id))
+    wave_status = "data_ready" if status == "done" else "data_ready_with_warnings"
+    conn.execute("UPDATE waves SET status=? WHERE id=? AND status='running'", (wave_status, run["wave_id"]))
+    if status in ("partial", "failed"):
+        conn.execute("INSERT INTO alerts(client_id,project_id,wave_id,kind,severity,message,created_at) SELECT client_id,project_id,wave_id,'run_incomplete','warning',?,? FROM runs WHERE id=?",
+                     (f"Run {run_id} 状态为 {status}，请检查失败样本；缺失不计为零提及。", utc_now(), run_id))
+
+
+def process_answer(answer_id: int) -> None:
+    with connect() as conn:
+        context = _answer_context(conn, answer_id)
+    if not context:
+        return
+    engine = context["engine"]
+    protocol = context["protocol"]
+    entities = context["entities"]
+    provider = build_provider(engine, SecretStore().get(engine["secret_ref"]),
+                              [entity["name"] for entity in sorted(entities, key=lambda item: item["role"] != "primary")])
+    rule = loads(engine["cost_rule_json"], {})
+    raw_text = context["raw_text"]
+    citations: list[dict] = []
+    answer_usage = loads(context["usage_json"], {})
+    if not raw_text:
+        try:
+            with _engine_slot(engine):
+                result = provider.ask(context["prompt"]["text"], protocol)
+            raw_text, citations = result.text, result.citations
+            cancel_after_answer = False
+            with transaction() as conn:
+                usage = _record_operations(conn, answer_id, result.operations, rule)
+                conn.execute("UPDATE answers SET raw_text=?,status='judging',usage_json=?,model=?,completed_at=? WHERE id=? AND raw_text IS NULL",
+                             (raw_text, dumps(usage), result.model, utc_now(), answer_id))
+                answer_usage = usage
+                cancel_after_answer = bool(one(conn, "SELECT cancel_requested FROM runs WHERE id=?", (context["run_id"],))["cancel_requested"])
+                if cancel_after_answer:
+                    conn.execute("UPDATE answers SET status='cancelled' WHERE id=?", (answer_id,))
+                    _finalize_run(conn, context["run_id"])
+            if cancel_after_answer:
+                return
+        except ProviderError as error:
+            retry = False
+            with transaction() as conn:
+                _record_operations(conn, answer_id, error.operations, rule,
+                                   {"kind": "search" if error.kind.startswith("search") else "answer",
+                                    "error_type": error.kind, "error_detail": str(error)[:1000]})
+                attempts = one(conn, "SELECT COUNT(*) AS count FROM call_attempts WHERE answer_id=? AND status='failed' AND kind IN ('answer','search')", (answer_id,))["count"]
+                cancelled = bool(one(conn, "SELECT cancel_requested FROM runs WHERE id=?", (context["run_id"],))["cancel_requested"])
+                retry = (error.retryable and not error.outcome_unknown and not cancelled
+                         and attempts <= int(protocol.get("max_safe_retries", 2)))
+                status = "queued" if retry else "cancelled" if cancelled else "failed"
+                conn.execute("UPDATE answers SET status=?,error_type=?,error_detail=?,completed_at=? WHERE id=?",
+                             (status, error.kind, str(error)[:1000], None if retry else utc_now(), answer_id))
+                if not retry:
+                    _finalize_run(conn, context["run_id"])
+            if retry:
+                time.sleep(min(2 ** attempts, 8))
+            return
+        except Exception as error:
+            with transaction() as conn:
+                conn.execute("UPDATE answers SET status='failed',error_type=?,error_detail=?,completed_at=? WHERE id=?",
+                             (type(error).__name__, str(error)[:1000], utc_now(), answer_id))
+                _finalize_run(conn, context["run_id"])
+            return
+    demo = engine["kind"] == "demo"
+    observations = fallback_observations(raw_text, entities, demo=demo)
+    discovered: list[dict] = []
+    if protocol.get("use_judge") and not demo:
+        try:
+            with _engine_slot(engine):
+                observations, discovered, judged = judge_answer(provider, raw_text, entities, protocol, citations)
+            with transaction() as conn:
+                _record_operations(conn, answer_id, judged.operations, rule)
+        except Exception as error:
+            observations = fallback_observations(raw_text, entities, demo=False)
+            kind = error.kind if isinstance(error, ProviderError) else "judge_invalid"
+            with transaction() as conn:
+                _record_operations(conn, answer_id, [], rule,
+                                   {"kind": "judge", "error_type": kind, "error_detail": str(error)[:1000]})
+    with transaction() as conn:
+        stored = _store_observations(conn, {"id": answer_id, **context}, observations)
+        primary = next(entity for entity in entities if entity["role"] == "primary")
+        _insert_citations(conn, context, citations, stored, primary, context["settings"])
+        _insert_discovered(conn, context, discovered)
+        conn.execute("UPDATE answers SET status='succeeded',completed_at=? WHERE id=?", (utc_now(), answer_id))
+        _finalize_run(conn, context["run_id"])
+
+
+class Worker:
+    def __init__(self, count: int | None = None):
+        self.count = count or config.worker_count()
+        self.stop_event = threading.Event()
+        self.threads: list[threading.Thread] = []
+
+    def recover(self) -> None:
+        with transaction() as conn:
+            conn.execute("UPDATE answers SET status='queued' WHERE status='running' AND raw_text IS NULL")
+            conn.execute("UPDATE answers SET status='judging' WHERE status='running' AND raw_text IS NOT NULL")
+            conn.execute("UPDATE answers SET status='judging' WHERE status='judging' AND raw_text IS NOT NULL")
+            idle_runs = all_rows(conn, "SELECT id FROM runs r WHERE status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM answers a WHERE a.run_id=r.id AND a.status IN ('queued','running','judging'))")
+            for run in idle_runs:
+                _finalize_run(conn, run["id"])
+
+    def start(self) -> None:
+        if self.threads:
+            return
+        self.recover()
+        self.stop_event.clear()
+        self.threads = [threading.Thread(target=self._loop, name=f"geopulse-worker-{index}", daemon=True)
+                        for index in range(self.count)]
+        for thread in self.threads:
+            thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        for thread in self.threads:
+            thread.join(timeout=2)
+        self.threads = []
+
+    def _loop(self) -> None:
+        while not self.stop_event.is_set():
+            claimed = _claim_answer()
+            if not claimed:
+                self.stop_event.wait(0.15)
+                continue
+            process_answer(claimed["id"])
+
+
+def load_run_samples(conn, run: dict) -> tuple[list[dict], dict]:
+    snapshot = loads(run["snapshot_json"], {})
+    protocol = snapshot.get("protocol") or snapshot
+    primary_id = next((entity_id for entity_id in protocol.get("entity_ids", [])
+                       if one(conn, "SELECT role FROM brand_entities WHERE id=?", (entity_id,))["role"] == "primary"), None)
+    answers = all_rows(conn, "SELECT a.*,p.canonical_intent_id,p.text AS prompt_text,p.dimension,p.query_type,p.priority,p.eligibility,e.name AS engine_name,e.mode AS engine_mode,e.kind AS engine_kind FROM answers a JOIN prompt_items p ON p.id=a.prompt_item_id JOIN engine_configs e ON e.id=a.engine_config_id WHERE a.run_id=? ORDER BY a.id", (run["id"],))
+    weights = protocol.get("stratum_weights") or {}
+    for answer in answers:
+        observations = all_rows(conn, "SELECT o.*,b.name,b.role FROM observations o JOIN brand_entities b ON b.id=o.brand_entity_id WHERE o.answer_id=? ORDER BY o.brand_entity_id,o.revision DESC", (answer["id"],))
+        latest = {}
+        for observation in observations:
+            if observation["brand_entity_id"] in latest:
+                continue
+            observation["citation_urls"] = loads(observation.pop("citation_urls_json"), [])
+            observation["judge_meta"] = loads(observation.pop("judge_meta_json"), {})
+            observation["discovered"] = loads(observation.pop("discovered_json"), [])
+            latest[observation["brand_entity_id"]] = observation
+        answer["observations"] = list(latest.values())
+        answer["weight"] = float(weights.get(answer["canonical_intent_id"],
+                                   weights.get(answer["dimension"], weights.get(answer["query_type"], 1))) or 1)
+    return answers, {"primary_id": primary_id, "protocol": protocol}
