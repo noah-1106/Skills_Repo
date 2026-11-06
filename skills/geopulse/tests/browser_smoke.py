@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -33,7 +34,7 @@ def wait_server(port: int, process: subprocess.Popen) -> None:
 
 def seed_official_run() -> None:
     from backend.app.db import connect, one
-    from backend.app.migrations import initialize
+    from backend.app.migrations import SCHEMA_VERSION, initialize
     from backend.app.services.measurement import Worker, create_run, create_wave
 
     initialize()
@@ -78,6 +79,7 @@ def main() -> None:
                "GEOPULSE_ADMIN_PASSWORD": PASSWORD, "GEOPULSE_DISABLE_WORKER": "1", "GEOPULSE_PORT": str(port)}
         os.environ.update({key: value for key, value in env.items() if key.startswith("GEOPULSE_")})
         seed_official_run()
+        from backend.app.migrations import SCHEMA_VERSION
         log = (temp / "server.log").open("w", encoding="utf-8")
         process = subprocess.Popen([sys.executable, str(ROOT / "run_test_server.py")], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -117,6 +119,9 @@ def main() -> None:
                 page.screenshot(path=OUTPUT / "02-prompt-scaffold.png", full_page=True)
                 page.get_by_role("button", name="加入当前草稿", exact=True).click()
                 page.get_by_text("已加入 16 条，跳过 0 条重复", exact=True).wait_for()
+                page.locator(".table-wrap .table-link").first.click()
+                page.get_by_role("dialog").get_by_text("Canonical intent", exact=True).wait_for()
+                page.get_by_role("button", name="关闭对话框", exact=True).click()
 
                 page.locator("#main-nav a[href='#/entities']").click()
                 page.get_by_role("button", name="新增实体", exact=True).click()
@@ -138,6 +143,7 @@ def main() -> None:
                 page.screenshot(path=OUTPUT / "04-measure-desktop.png", full_page=True)
 
                 page.locator("#main-nav a[href='#/review']").click()
+                page.get_by_label("复核状态", exact=True).select_option("all")
                 page.wait_for_selector(".raw-answer")
                 page.screenshot(path=OUTPUT / "05-review-desktop.png", full_page=True)
                 raw_answer = page.locator(".raw-answer").inner_text()
@@ -177,29 +183,35 @@ def main() -> None:
                 page.get_by_label("目标 URL / 平台", exact=True).fill("https://example.com/browser-evidence")
                 page.get_by_role("button", name="创建 Action 草稿", exact=True).click()
                 page.get_by_text("浏览器七步事实页", exact=True).wait_for()
-                page.get_by_role("button", name="待审核", exact=True).click()
-                page.get_by_role("button", name="已批准", exact=True).wait_for()
-                page.get_by_role("button", name="已批准", exact=True).click()
+                page.get_by_role("button", name="提交审核", exact=True).click()
+                page.get_by_role("button", name="批准行动", exact=True).wait_for()
+                page.get_by_role("button", name="批准行动", exact=True).click()
                 page.get_by_role("button", name="登记真实发布", exact=True).wait_for()
                 page.get_by_role("button", name="登记真实发布", exact=True).click()
                 page.get_by_role("button", name="确认已发布并登记事件", exact=True).click()
                 page.get_by_role("button", name="安排复测", exact=True).wait_for()
                 page.get_by_role("button", name="安排复测", exact=True).click()
-                page.get_by_role("button", name="进入待复测", exact=True).click()
-                page.get_by_role("button", name="确认改善", exact=True).wait_for()
-                page.get_by_role("button", name="确认改善", exact=True).click()
-                page.get_by_label("复测结论依据", exact=True).fill("浏览器模拟复测证据，只记录共时变化，不作因果断言")
-                page.get_by_role("dialog").get_by_role("button", name="已验证", exact=True).click()
-                page.get_by_text("流程完成", exact=True).wait_for()
+                page.get_by_label("发布后多少天复测", exact=True).fill("14")
+                page.get_by_role("button", name="创建复测调度", exact=True).click()
+                page.get_by_text("已创建真实复测调度，可在系统管理中查看", exact=True).wait_for()
+                page.get_by_role("tab", name="待复测 (1)", exact=True).click()
+                page.get_by_role("button", name="未见改善", exact=True).click()
+                page.get_by_label("复测结论依据", exact=True).fill("浏览器读取同口径正式 Run，记录未改善，不作因果断言")
+                page.get_by_role("dialog").get_by_role("button", name="未见改善", exact=True).click()
+                page.get_by_role("tab", name="已结束 (1)", exact=True).click()
+                page.get_by_role("button", name="重新打开为草稿", exact=True).wait_for()
                 page.wait_for_function("() => { const toast = document.getElementById('toast'); return !toast.classList.contains('show') && getComputedStyle(toast).opacity === '0'; }")
                 page.screenshot(path=OUTPUT / "05b-action-complete.png", full_page=True)
 
                 page.locator("#main-nav a[href='#/reports']").click()
                 page.get_by_role("button", name="检查口径并比较", exact=True).click()
                 page.get_by_text("协议与样本完整度通过", exact=True).wait_for()
-                page.wait_for_selector(".chart canvas")
+                page.wait_for_selector(".transition-grid")
+                assert page.get_by_text("小样本仅观察方向", exact=True).count() > 0
                 assert page.get_by_text("持续提及", exact=True).count() > 0
+                assert page.get_by_role("columnheader", name="相对变化", exact=True).count() == 0
                 page.screenshot(path=OUTPUT / "06a-comparison-desktop.png", full_page=True)
+                page.get_by_role("tab", name="报告交付 (0)", exact=True).click()
                 page.get_by_role("button", name="创建报告快照", exact=True).click()
                 page.get_by_role("button", name="创建不可变快照", exact=True).click()
                 page.get_by_text("报告 v1 · 草稿", exact=True).wait_for()
@@ -212,6 +224,11 @@ def main() -> None:
                 assert pdf.status == 200, pdf.text()
                 assert pdf.body().startswith(b"%PDF")
                 (OUTPUT / "client-report.pdf").write_bytes(pdf.body())
+                report_html = page.request.get(f"{base}/api/projects/1/reports/1/export?variant=client&format=html")
+                assert report_html.status == 200, report_html.text()
+                report_text = report_html.text()
+                assert "选购词" in report_text and "客户已确认适用" in report_text and "第 3 步" in report_text
+                assert "client_confirmed" not in report_text and "Step 3" not in report_text
                 page.wait_for_function("() => { const toast = document.getElementById('toast'); return !toast.classList.contains('show') && getComputedStyle(toast).opacity === '0'; }")
                 page.screenshot(path=OUTPUT / "06-reports-desktop.png", full_page=True)
 
@@ -221,27 +238,29 @@ def main() -> None:
                     raise RuntimeError(f"Admin diagnostics: {errors}; body={page.locator('body').inner_text()}")
                 page.get_by_text("引擎配置", exact=True).wait_for()
                 page.screenshot(path=OUTPUT / "07-admin-desktop.png", full_page=True)
-                page.get_by_role("tab", name="调度与告警").click()
+                page.get_by_role("tab", name=re.compile(r"^调度与告警")).click()
                 page.get_by_text("Wave 调度", exact=True).wait_for()
                 page.get_by_role("button", name="安排复测", exact=True).click()
-                page.get_by_label("复测锚点", exact=True).select_option("14")
+                page.get_by_label("执行频率", exact=True).select_option("14")
+                page.get_by_label("下次执行时间", exact=True).fill("2027-01-15T10:00")
                 page.get_by_role("button", name="保存调度", exact=True).click()
                 page.get_by_text("复测调度已保存", exact=True).wait_for()
-                page.get_by_text("待执行", exact=True).wait_for()
+                page.get_by_text("待执行", exact=True).first.wait_for()
                 page.get_by_role("tab", name="成本与运营").click()
-                page.get_by_text("分调用类型成本", exact=True).wait_for()
+                page.get_by_text("调用类型与币种", exact=True).wait_for()
                 page.get_by_role("tab", name="设置与数据治理").click()
                 with page.expect_download() as backup_download:
                     page.get_by_role("button", name="立即备份数据库", exact=True).click()
                 backup_manifest = json.loads(Path(backup_download.value.path()).read_text(encoding="utf-8"))
-                assert backup_manifest["sha256"] and backup_manifest["schema_version"] == 1
+                assert backup_manifest["sha256"] and backup_manifest["schema_version"] == SCHEMA_VERSION
                 with page.expect_download() as export_download:
                     page.get_by_role("button", name="导出当前项目", exact=True).click()
                 exported = json.loads(Path(export_download.value.path()).read_text(encoding="utf-8"))
                 assert exported["sha256"] and exported["project_id"] == 1
                 assert all(not row["secret_ref"] for row in exported["tables"]["engine_configs"])
 
-                page.get_by_role("button", name="新建项目", exact=True).click()
+                page.locator("#account-menu summary").click()
+                page.get_by_role("button", name="新建客户项目", exact=True).click()
                 page.get_by_label("客户名称", exact=True).fill("第二测试客户")
                 page.get_by_label("项目名称", exact=True).fill("待删除隔离项目")
                 page.get_by_label("业务品类", exact=True).fill("隔离测试")
@@ -249,7 +268,8 @@ def main() -> None:
                 page.get_by_text("品牌实体工作台", exact=True).wait_for()
                 page.locator("#main-nav a[href='#/admin']").click()
                 page.get_by_role("tab", name="设置与数据治理").click()
-                page.get_by_role("button", name="删除当前项目", exact=True).click()
+                page.get_by_text("危险操作：删除当前项目", exact=True).click()
+                page.get_by_role("button", name="永久删除当前项目", exact=True).click()
                 page.get_by_label("输入完整项目名确认", exact=True).fill("错误确认")
                 page.get_by_role("button", name="永久删除项目", exact=True).click()
                 page.get_by_text("项目名不完全一致", exact=True).wait_for()
@@ -258,6 +278,23 @@ def main() -> None:
                     page.get_by_role("button", name="永久删除项目", exact=True).click()
                 page.get_by_role("heading", name="系统管理", exact=True).wait_for()
                 assert page.get_by_label("切换客户项目").input_value() == "1"
+
+                visual_routes = [
+                    ("overview", "#/overview", "项目总览"),
+                    ("prompts", "#/prompts", "问题集工作台"),
+                    ("entities", "#/entities", "品牌实体工作台"),
+                    ("measure", "#/measure", "测量执行"),
+                    ("opportunities", "#/opportunities?tab=closed", "机会与行动"),
+                    ("review", "#/review?review=all", "证据复核"),
+                    ("reports", "#/reports?tab=delivery&report=1", "对比与报告"),
+                    ("admin", "#/admin?tab=engines", "系统管理"),
+                ]
+                for name, route, heading in visual_routes:
+                    page.evaluate("route => { location.hash = route; }", route)
+                    page.get_by_role("heading", name=heading, exact=True).wait_for()
+                    page.wait_for_timeout(200)
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"1280 overflow: {name}"
+                    page.screenshot(path=OUTPUT / f"11-{name}-1280.png", full_page=True)
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.locator("#main-nav a[href='#/overview']").evaluate("node => node.click()")
@@ -278,6 +315,8 @@ def main() -> None:
                 assert not page.locator(".shell-main").evaluate("node => node.inert")
                 page.get_by_role("button", name="打开导航").click()
                 page.locator("#main-nav a[href='#/review']").click()
+                page.get_by_label("复核状态", exact=True).select_option("all")
+                page.locator(".evidence-browser .list-item").first.click()
                 page.wait_for_selector(".raw-answer")
                 page.wait_for_function("""() => {
                   const sidebar = document.getElementById('sidebar');
@@ -286,6 +325,26 @@ def main() -> None:
                 }""")
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=OUTPUT / "09-review-mobile.png", full_page=True)
+                page.get_by_role("button", name="返回回答清单", exact=True).click()
+                page.locator(".evidence-browser:not(.has-detail) .list-rail").wait_for()
+                assert not page.locator(".evidence-browser .detail-pane").is_visible()
+                page.screenshot(path=OUTPUT / "09a-review-list-mobile.png", full_page=True)
+
+                for name, route, heading in visual_routes:
+                    if name in ("overview", "review"):
+                        continue
+                    page.evaluate("route => { location.hash = route; }", route)
+                    page.get_by_role("heading", name=heading, exact=True).wait_for()
+                    page.wait_for_timeout(200)
+                    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"390 overflow: {name}"
+                    page.screenshot(path=OUTPUT / f"12-{name}-mobile.png", full_page=True)
+                page.get_by_role("button", name="检查演示引擎", exact=True).click()
+                page.get_by_role("button", name="确认并检查", exact=True).click()
+                page.locator("#toast.show").wait_for()
+                primary = page.get_by_role("button", name="新增引擎", exact=True).bounding_box()
+                notice = page.locator("#toast").bounding_box()
+                assert primary["y"] >= notice["y"] + notice["height"], "Mobile toast covers the primary action"
+                page.screenshot(path=OUTPUT / "13-mobile-toast.png", full_page=True)
 
                 page.set_viewport_size({"width": 1280, "height": 900})
                 page.evaluate("location.hash = '#/admin?tab=members'")
@@ -315,6 +374,7 @@ def main() -> None:
                     role_errors.clear()
                     assert role_page.get_by_role("button", name="新建测量方案", exact=True).count() == 0
                     role_page.locator("#main-nav a[href='#/review']").click()
+                    role_page.get_by_label("复核状态", exact=True).select_option("all")
                     role_page.wait_for_selector(".observation")
                     assert role_page.locator(".raw-answer").count() == 0
                     assert role_page.get_by_text("原文不可见", exact=True).count() > 0
@@ -323,6 +383,7 @@ def main() -> None:
                     assert answer["raw_text"] is None and answer["error_detail"] is None
                     assert all("cost" not in attempt for attempt in answer["call_attempts"])
                     role_page.locator("#main-nav a[href='#/reports']").click()
+                    role_page.get_by_role("tab", name=re.compile(r"^报告交付")).click()
                     role_page.get_by_role("button", name="打开报告", exact=True).click()
                     role_page.get_by_text("报告 v1 · 客户版已批准", exact=True).wait_for()
                     assert role_page.get_by_role("button", name="预览内部版", exact=True).count() == 0
@@ -350,7 +411,7 @@ def main() -> None:
     print(json.dumps({
         "status": "passed", "screenshots": str(OUTPUT), "workflows": 8,
         "comparison": "strict", "roles": ["viewer", "reviewer"], "mobile": True,
-        "action_workflow": "verified", "governance": ["schedule", "backup", "export", "project_delete"],
+        "action_workflow": "not_effective", "governance": ["schedule", "backup", "export", "project_delete"],
         "pdf": "client-report.pdf",
     }, ensure_ascii=False))
 

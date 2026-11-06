@@ -11,6 +11,7 @@ from ..db import all_rows, dumps, loads, one, utc_now
 from ..engine.compare import compare_metrics
 from ..engine.metrics import calculate_metrics, ratio
 from ..security import audit
+from .costs import summarize_costs
 from .measurement import load_run_samples
 from .state import transition
 
@@ -43,18 +44,19 @@ def wave_metrics(conn, wave: dict, allow_empty: bool = False) -> tuple[dict, dic
 
 def _costs(conn, run_ids: list[int]) -> dict:
     if not run_ids:
-        return {"amount": 0, "unknown": False, "by_kind": {}, "tokens": {}}
-    marks = ",".join("?" * len(run_ids))
-    by_kind = {row["kind"]: round(row["cost"] or 0, 6) for row in conn.execute(
-        f"SELECT kind,SUM(cost) AS cost FROM call_attempts WHERE answer_id IN (SELECT id FROM answers WHERE run_id IN ({marks})) GROUP BY kind", run_ids)}
-    unknown = one(conn, f"SELECT COUNT(*) AS count FROM call_attempts WHERE cost IS NULL AND answer_id IN (SELECT id FROM answers WHERE run_id IN ({marks}))", run_ids)["count"] > 0
-    tokens = {row["kind"]: {"prompt_tokens": 0, "completion_tokens": 0} for row in conn.execute(
-        f"SELECT DISTINCT kind FROM call_attempts WHERE answer_id IN (SELECT id FROM answers WHERE run_id IN ({marks}))", run_ids)}
-    for row in conn.execute(f"SELECT kind,usage_json FROM call_attempts WHERE answer_id IN (SELECT id FROM answers WHERE run_id IN ({marks}))", run_ids):
-        usage = loads(row["usage_json"], {})
-        for key in ("prompt_tokens", "completion_tokens"):
-            tokens[row["kind"]][key] += int(usage.get(key) or 0)
-    return {"amount": round(sum(by_kind.values()), 6), "unknown": unknown, "by_kind": by_kind, "tokens": tokens}
+        return {"amount": None, "unknown": False, "by_kind": {}, "by_currency": {}, "tokens": {}}
+    # Run ids are already tenant-scoped by build_snapshot; keep the project predicate intact.
+    run = one(conn, "SELECT project_id FROM runs WHERE id=?", (run_ids[0],))
+    summary = summarize_costs(conn, run["project_id"], run_ids)
+    currencies = summary["by_currency"]
+    amount = next((value["known_cost"] for value in currencies.values()), None) if len(currencies) == 1 and not summary["unknown"] else None
+    by_kind = {}
+    for row in summary["items"]:
+        key = f"{row['kind']} / {row['operation']} / {row['currency'] or '历史未标币种'}"
+        by_kind[key] = {"calls": row["calls"], "known_cost": row["known_cost"], "unknown": row["unknown"]}
+    return {"amount": amount, "unknown": summary["unknown"] or len(currencies) > 1,
+            "by_kind": by_kind, "by_currency": currencies, "tokens": summary["tokens"],
+            "note": "按真实 usage 与管理员价格规则估算，非厂商账单；未知或混合币种不汇总成精确金额"}
 
 
 def _source_structure(conn, run_ids: list[int]) -> list[dict]:
@@ -83,16 +85,25 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
     for wave in waves:
         metrics, protocol, run = wave_metrics(conn, wave, allow_empty=True)
         public_metrics = {key: value for key, value in metrics.items() if key != "pairs"}
-        wave_payload.append({"wave": {key: value for key, value in wave.items() if key not in ("protocol_json", "stats_json")},
+        samples = load_run_samples(conn, run)[0] if run else []
+        purged = sum(not sample.get("content_retained", 1) for sample in samples)
+        evidence_issues = sum(
+            observation.get("entity_status") == "confirmed" and observation.get("mentioned")
+            and (not observation.get("evidence") or observation["evidence"] not in (sample.get("raw_text") or ""))
+            for sample in samples if sample.get("content_retained", 1)
+            for observation in sample.get("observations", []))
+        wave_payload.append({"wave": {key: value for key, value in wave.items()
+                                      if key not in ("protocol_json", "stats_json", "engine_snapshot_json")},
                              "protocol": protocol, "stats": loads(wave["stats_json"], {}),
                              "run": ({"id": run["id"], "attempt_no": run["attempt_no"], "status": run["status"]} if run else None),
-                             "metrics": public_metrics})
+                             "metrics": public_metrics, "raw_evidence_purged": purged,
+                             "evidence_issues": evidence_issues})
         if run:
             run_ids.append(run["id"])
-            samples, _ = load_run_samples(conn, run)
             internal_samples.extend({"id": sample["id"], "run_id": run["id"], "prompt_text": sample["prompt_text"],
                                      "engine_name": sample["engine_name"], "round_no": sample["round_no"],
                                      "status": sample["status"], "raw_text": sample["raw_text"],
+                                     "content_retained": sample.get("content_retained", 1),
                                      "error_type": sample["error_type"], "error_detail": sample["error_detail"],
                                      "observations": sample["observations"]} for sample in samples)
     comparison = None
@@ -119,12 +130,18 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
     elif comparison and not comparison.get("comparable"):
         diagnosis = comparison.get("reason") or "两次测量不可严格比较"
     else:
+        dimension_labels = {"brand": "品牌词", "scene": "场景词", "compare": "对比词", "choice": "选购词"}
         measured_dimensions = [item for item in latest["dimensions"] if item["coverage"]["n"]]
         worst = min(measured_dimensions, key=lambda item: item["coverage"]["value"], default=None)
-        diagnosis = (f"已测得有效推荐率为 {latest['effective_recommendation_rate']['hits']}/{latest['effective_recommendation_rate']['n']}"
-                     f"（{latest['effective_recommendation_rate']['value']}%）。")
+        recommendation = latest["effective_recommendation_rate"]
+        if recommendation["limited"] or latest["coverage"]["limited"]:
+            diagnosis = (f"有效推荐原始计数为 {recommendation['hits']}/{recommendation['n']}，"
+                         f"Wilson 区间为 {recommendation['ci_low']}%–{recommendation['ci_high']}%。"
+                         "样本量较小，仅用于观察方向，不输出确定性百分比诊断。")
+        else:
+            diagnosis = f"已测得有效推荐率为 {recommendation['hits']}/{recommendation['n']}（{recommendation['value']}%）。"
         if worst and worst["coverage"]["value"] < 100:
-            diagnosis += f"覆盖率最低的已测维度为{worst['key']}（{worst['coverage']['hits']}/{worst['coverage']['n']}）。"
+            diagnosis += f"覆盖率最低的已测维度为{dimension_labels.get(worst['key'], worst['key'])}（{worst['coverage']['hits']}/{worst['coverage']['n']}）。"
         diagnosis += "样本与口径限制见下文，不作策略因果断言。"
     return {"schema_version": 1, "project": {"id": project["id"], "client_id": project["client_id"],
             "name": project["name"], "category": project["category"], "market": project["market"],
@@ -151,18 +168,35 @@ def _contains_secret(value, key: str = "") -> bool:
 
 def release_gates(snapshot: dict) -> list[str]:
     errors = []
-    latest = snapshot["waves"][-1]["metrics"]
-    if not latest["quality"]["valid_samples"]:
-        errors.append("无有效样本，禁止输出诊断结论")
-    if latest["quality"]["pending_review_answers"]:
-        errors.append(f"仍有 {latest['quality']['pending_review_answers']} 条回答待人工复核")
-    if len(latest["measurement_modes"]) > 1:
-        errors.append("memory/search 口径混合")
+    for item in snapshot["waves"]:
+        label = item["wave"]["label"]
+        metrics = item["metrics"]
+        quality = metrics["quality"]
+        run = item.get("run")
+        if not run or run["status"] not in ("done", "partial"):
+            errors.append(f"{label}：尚未指定已完成的正式 Run")
+        if not quality["valid_samples"]:
+            errors.append(f"{label}：无有效样本，禁止输出诊断结论")
+        threshold = float(item.get("stats", {}).get("min_pair_completeness", 0.9)) * 100
+        if quality["valid_sample_rate"]["value"] < threshold:
+            errors.append(f"{label}：有效样本完整度 {quality['valid_sample_rate']['value']}% 低于 {threshold:g}%")
+        if quality["pending_review_answers"]:
+            errors.append(f"{label}：仍有 {quality['pending_review_answers']} 条回答待人工复核")
+        if quality["judge_fallback_rate"]["value"] > 20:
+            errors.append(f"{label}：Judge 降级率超过 20%，需先复核判定质量")
+        if len(metrics["measurement_modes"]) > 1:
+            errors.append(f"{label}：memory/search 口径混合")
+        if item.get("raw_evidence_purged"):
+            errors.append(f"{label}：{item['raw_evidence_purged']} 条原文已按保留策略清理，新报告不能通过原文证据闸门")
+        if item.get("evidence_issues"):
+            errors.append(f"{label}：{item['evidence_issues']} 条确认提及无法逐字回查原文")
     if snapshot.get("comparison") and not snapshot["comparison"].get("comparable"):
         errors.append(snapshot["comparison"].get("reason") or "对比口径不一致")
     for opportunity in snapshot["opportunities"]:
         if opportunity["eligibility"] not in ("eligible", "client_confirmed"):
             errors.append(f"机会 {opportunity['id']} 未通过适用性审核")
+        if not (opportunity.get("evidence", {}).get("evidence") or []):
+            errors.append(f"机会 {opportunity['id']} 缺少可回查证据")
     if _contains_secret(snapshot):
         errors.append("快照疑似包含密钥")
     return errors
@@ -183,11 +217,12 @@ def create_report(conn, project: dict, wave_ids: list[int], actor: int) -> dict:
     snapshot_hash = hashlib.sha256(dumps(snapshot).encode()).hexdigest()
     snapshot["data_snapshot_hash"] = snapshot_hash
     client_html, internal_html = render_reports(snapshot)
+    client_hash = hashlib.sha256(client_html.encode()).hexdigest()
+    internal_hash = hashlib.sha256(internal_html.encode()).hexdigest()
     now = utc_now()
-    report_id = conn.execute("INSERT INTO reports(client_id,project_id,wave_ids_json,data_snapshot_json,data_snapshot_hash,version,client_html,internal_html,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    report_id = conn.execute("INSERT INTO reports(client_id,project_id,wave_ids_json,data_snapshot_json,data_snapshot_hash,version,client_html,internal_html,client_html_sha256,internal_html_sha256,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                              (project["client_id"], project["id"], dumps(wave_ids), dumps(snapshot),
-                              snapshot_hash, version,
-                              client_html, internal_html, actor, now, now)).lastrowid
+                              snapshot_hash, version, client_html, internal_html, client_hash, internal_hash, actor, now, now)).lastrowid
     conn.execute("INSERT INTO report_events(report_id,actor,to_status,created_at) VALUES(?,?,'draft',?)", (report_id, actor, now))
     row = one(conn, "SELECT * FROM reports WHERE id=?", (report_id,))
     audit(conn, actor, project, "report", report_id, "create", None, {"version": version, "wave_ids": wave_ids})
@@ -200,4 +235,11 @@ def transition_report(conn, report: dict, new_status: str, actor: int, reason: s
         errors = release_gates(snapshot)
         if errors:
             raise HTTPException(409, {"message": "报告发布闸门未通过", "errors": errors})
-    return transition(conn, "reports", report, new_status, actor, reason)
+    row = transition(conn, "reports", report, new_status, actor, reason)
+    snapshot = loads(report["data_snapshot_json"], {})
+    snapshot["approval_status"] = new_status
+    client_html, internal_html = render_reports(snapshot)
+    conn.execute("UPDATE reports SET client_html=?,internal_html=?,client_html_sha256=?,internal_html_sha256=? WHERE id=?",
+                 (client_html, internal_html, hashlib.sha256(client_html.encode()).hexdigest(),
+                  hashlib.sha256(internal_html.encode()).hexdigest(), report["id"]))
+    return one(conn, "SELECT * FROM reports WHERE id=?", (report["id"],))

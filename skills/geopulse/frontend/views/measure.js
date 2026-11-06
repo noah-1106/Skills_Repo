@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { h, clear, pageHead, section, dataTable, badge, metric, drawer, field, input, select, checkbox, toast, formError, confirmDialog, formatDate, label, emptyState } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, metric, drawer, field, input, select, checkbox, toast, formError, confirmDialog, formatDate, label, emptyState, handleBudgetError, pct } from "../components.js";
 
 export async function renderMeasure(root, ctx) {
   const [waveData, setData, engineData] = await Promise.all([
@@ -37,8 +37,8 @@ export async function renderMeasure(root, ctx) {
     h("dl", { class: "definition-list" },
       h("div", {}, h("dt", {}, "测量目标"), h("dd", {}, `${label(protocol.mode)} · ${label(protocol.measurement_target)}`)),
       h("div", {}, h("dt", {}, "问题 / 引擎 / 轮次"), h("dd", {}, `${wave.estimate.prompt_items} × ${wave.estimate.engines} × ${protocol.repeats}`)),
-      h("div", {}, h("dt", {}, "外部调用上限"), h("dd", { class: "num" }, wave.estimate.total_external_calls)),
-      h("div", {}, h("dt", {}, "费用预估"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知" : `${wave.estimate.estimated_cost} ${wave.estimate.by_engine[0]?.currency || "CNY"}`))),
+      h("div", {}, h("dt", {}, "基础 / 安全重试调用"), h("dd", { class: "num" }, `${wave.estimate.total_external_calls} / ${wave.estimate.max_external_calls}`)),
+      ["admin", "analyst"].includes(ctx.role) ? h("div", {}, h("dt", {}, "基础 / 含重试费用预估"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知" : `${wave.estimate.estimated_cost} / ${wave.estimate.max_estimated_cost} ${wave.estimate.currency || ""}`)) : null),
     h("p", { class: "muted small" }, wave.estimate.note)));
   if (run) {
     const progress = run.progress;
@@ -53,15 +53,15 @@ export async function renderMeasure(root, ctx) {
       run.error ? h("p", { class: "form-error" }, run.error) : null));
     if (metrics.quality.valid_samples) {
       detail.append(h("div", { class: "metric-strip" }, metric("意图覆盖", metrics.coverage), metric("稳定命中", metrics.hit_rate), metric("有效推荐", metrics.effective_recommendation_rate), metric("北极星", metrics.north_star)));
-      detail.append(h("p", { class: "muted small" }, `SoV ${metrics.share_of_voice.value}% · ${metrics.share_of_voice.definition}。${metrics.limitations.join("；")}`));
+      detail.append(h("p", { class: "muted small" }, metrics.coverage.limited ? "小样本仅展示原始计数与方向；不显示确定性 SoV 或百分点诊断。" : `SoV ${pct(metrics.share_of_voice.value)} · ${metrics.share_of_voice.definition}。${metrics.limitations.join("；")}`));
     } else detail.append(h("div", { class: "inline-panel warning-panel" }, h("h3", {}, "当前没有可诊断的有效样本"), h("p", {}, "请检查队列、引擎错误和取消记录。这里不会显示“0% 提及”作为业务结论。")));
     detail.append(h("dl", { class: "definition-list" },
       h("div", {}, h("dt", {}, "有效样本"), h("dd", {}, `${metrics.quality.valid_samples}/${metrics.quality.expected_samples}`)),
       h("div", {}, h("dt", {}, "失败 / 取消"), h("dd", {}, `${metrics.quality.failed_samples} / ${metrics.quality.cancelled_samples}`)),
       h("div", {}, h("dt", {}, "待复核回答"), h("dd", {}, metrics.quality.pending_review_answers)),
       h("div", {}, h("dt", {}, "Judge 降级"), h("dd", {}, `${metrics.quality.judge_fallback_rate.hits}/${metrics.quality.judge_fallback_rate.n}`))));
-    if (metrics.dimensions.length) detail.append(section("四维原始计数", "小样本只展示计数与方向，不据此判定确定胜负", dataTable(["维度", "覆盖率", "命中", "有效回答"], metrics.dimensions.map((row) => [row.key, `${row.coverage.hits}/${row.coverage.n} · ${row.coverage.value}%`, `${row.hit_rate.hits}/${row.hit_rate.n}`, row.samples]))));
-    if (metrics.competitors.length) detail.append(section("实体池表现", "SoV 与主品牌采用完全相同的意图×引擎加权口径", dataTable(["实体", "角色", "确认提及", "SoV", "负面"], metrics.competitors.map((row) => [row.name, label(row.role), row.mentions, `${row.sov}%`, row.negative]))));
+    if (metrics.dimensions.length) detail.append(section("四维原始计数", "小样本只展示计数与方向，不据此判定确定胜负", dataTable(["维度", "覆盖", "命中 / 有效回答", "样本"], metrics.dimensions.map((row) => [label(row.key), `${row.coverage.hits}/${row.coverage.n}${row.coverage.limited ? "" : ` · ${pct(row.coverage.value)}`}`, `${row.hit_rate.hits}/${row.hit_rate.n}`, row.samples]))));
+    if (metrics.competitors.length) detail.append(section("实体池表现", "SoV 与主品牌采用完全相同的意图×引擎加权口径；小样本不显示 SoV", dataTable(["实体", "角色", "确认提及", "SoV", "负面"], metrics.competitors.map((row) => [row.name, label(row.role), row.mentions, metrics.coverage.limited ? "—" : pct(row.sov), row.negative]))));
   } else detail.append(emptyState("尚未创建 run", "调用预估仅用于确认，不会自动执行。创建后即使离开页面，持久队列也会继续。", null));
   root.append(h("div", { class: "split-layout" }, rail, detail));
   root.append(section("此 Wave 的执行记录", "正式 run 只能由管理员人工指定；重试不会覆盖原回答", dataTable(["Run", "状态", "开始", "结束", "操作"], wave.runs.map((item) => [
@@ -107,15 +107,24 @@ function waveWizard(ctx, sets, engines) {
         h("div", {}, h("dt", {}, "检索调用"), h("dd", {}, wave.estimate.search_calls)), h("div", {}, h("dt", {}, "预估费用"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知，不按零成本处理" : wave.estimate.estimated_cost))),
         h("p", { class: "muted" }, wave.estimate.note), h("div", { class: "form-actions" },
           h("button", { class: "button secondary", onClick: () => { modal.close(); ctx.navigate("measure", { wave: wave.id }); } }, "仅保存方案"),
-          h("button", { class: "button", onClick: async () => { try { const result = await api.post(`/api/projects/${ctx.project.id}/waves/${wave.id}/runs`, {}); modal.close(); toast("Run 已进入持久队列"); ctx.navigate("measure", { wave: wave.id, run: result.run.id }); } catch (error) { toast(error.message, true); } } }, "确认调用并创建 Run")));
+          h("button", { class: "button", onClick: async () => { try { await startRun(ctx, wave); modal.close(); } catch (error) { if (!handleBudgetError(error, async (reason) => { await startRun(ctx, wave, reason); modal.close(); })) toast(error.message, true); } } }, "确认调用并创建 Run")));
     } catch (error) { formError(form, error); }
   });
 }
 
+async function startRun(ctx, wave, budgetReason = "") {
+  const result = await api.post(`/api/projects/${ctx.project.id}/waves/${wave.id}/runs`, { budget_confirmation_reason: budgetReason });
+  toast("Run 已进入持久队列");
+  ctx.navigate("measure", { wave: wave.id, run: result.run.id });
+  return result;
+}
+
 function confirmRun(ctx, wave) {
   const real = wave.protocol.engine_signature.some((engine) => engine.kind !== "demo");
-  confirmDialog("确认创建 Run", `将执行 ${wave.estimate.total_external_calls} 次外部调用。${wave.estimate.cost_unknown ? "部分价格未知。" : `预估费用 ${wave.estimate.estimated_cost}。`}${real ? "真实厂商可能产生费用；超时等结果不明样本不会自动重放。" : "当前为演示引擎。"}`, "确认并进入队列", async () => {
-    const result = await api.post(`/api/projects/${ctx.project.id}/waves/${wave.id}/runs`, {}); toast("Run 已创建"); ctx.navigate("measure", { wave: wave.id, run: result.run.id });
+  const estimate = wave.estimate.cost_unknown ? "部分价格未知，不会按零成本处理。" : `基础预估 ${wave.estimate.estimated_cost}，含安全重试预估 ${wave.estimate.max_estimated_cost} ${wave.estimate.currency || ""}。`;
+  confirmDialog("确认创建 Run", `基础调用 ${wave.estimate.total_external_calls} 次，含安全重试最多 ${wave.estimate.max_external_calls} 次。${estimate}${real ? "真实厂商可能产生费用；超时等结果不明样本不会自动重放。" : "当前为演示引擎。"}`, "确认并进入队列", async () => {
+    try { await startRun(ctx, wave); }
+    catch (error) { if (!handleBudgetError(error, (reason) => startRun(ctx, wave, reason))) throw error; }
   });
 }
 
@@ -124,7 +133,13 @@ function cancelRun(ctx, wave, run) {
 }
 
 function retryRun(ctx, run) {
-  confirmDialog("确认重试失败样本", "失败与取消样本会重新排队。超时等结果不明的外部调用可能已被厂商计费，本次重试由管理员明确确认。", "确认重试", async () => { const result = await api.post(`/api/projects/${ctx.project.id}/runs/${run.id}/retry`, {}); toast(`已重新排队 ${result.queued} 个样本`); ctx.refresh(); });
+  const execute = async (reason = "") => {
+    const result = await api.post(`/api/projects/${ctx.project.id}/runs/${run.id}/retry`, { budget_confirmation_reason: reason });
+    toast(`已重新排队 ${result.queued} 个样本`); ctx.refresh();
+  };
+  confirmDialog("确认重试失败样本", "失败与取消样本会重新排队。超时等结果不明的外部调用可能已被厂商计费，本次重试由管理员明确确认；系统会按失败样本比例重新检查预算。", "确认重试", async () => {
+    try { await execute(); } catch (error) { if (!handleBudgetError(error, execute)) throw error; }
+  });
 }
 
 function selectOfficial(ctx, wave, run) {

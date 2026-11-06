@@ -25,12 +25,19 @@
         <button id="menu-button" class="icon-button mobile-only" aria-label="打开导航" aria-expanded="false">☰</button>
         <div id="project-switcher" class="project-switcher"></div>
         <div class="topbar-spacer"></div>
-        <span id="role-label" class="quiet-label"></span>
-        <button id="logout-button" class="text-button">退出登录</button>
+        <details id="account-menu" class="account-menu">
+          <summary><span id="account-name">当前账号</span><span id="role-label" class="quiet-label"></span></summary>
+          <div class="account-popover">
+            <strong id="account-email"></strong>
+            <span id="account-scope">项目成员</span>
+            <button id="new-project-button" class="text-button" type="button" hidden>新建客户项目</button>
+            <button id="logout-button" class="text-button" type="button">退出登录</button>
+          </div>
+        </details>
       </header>
       <div id="protocol-band" class="protocol-band" aria-label="当前测量口径"></div>
       <main id="workspace" tabindex="-1">
-        <div class="page-loading" role="status"><span class="loading-line"></span>正在读取项目工作区…</div>
+        <div class="page-skeleton" role="status" aria-label="正在读取项目工作区"><div class="skeleton-heading"><span></span><span></span></div><div class="skeleton-summary"></div><div class="skeleton-table"><span></span><span></span><span></span></div></div>
       </main>
     </div>
   </div>

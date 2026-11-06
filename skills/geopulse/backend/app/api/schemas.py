@@ -89,6 +89,10 @@ class WaveIn(Model):
     stats: dict[str, Any] = {}
 
 
+class RunCreateIn(Model):
+    budget_confirmation_reason: str = ""
+
+
 class ObservationRevisionIn(Model):
     entity_status: Literal["confirmed", "ambiguous", "wrong_entity", "unknown"]
     mentioned: bool
@@ -125,6 +129,7 @@ class ActionStatusIn(Model):
     published_url: str | None = None
     artifact_version: str | None = None
     target_wave_id: int | None = None
+    remeasure_days: int = Field(default=14, ge=1, le=365)
 
 
 class ReportIn(Model):
@@ -149,6 +154,7 @@ class EngineIn(Model):
 
 class HealthCheckIn(Model):
     confirm: bool = False
+    budget_confirmation_reason: str = ""
 
 
 class UserIn(Model):
@@ -163,7 +169,15 @@ class MembershipIn(Model):
 
 class ScheduleIn(Model):
     wave_id: int
-    scheduled_at: str
+    scheduled_at: str | None = None
+    recurrence_days: int | None = Field(default=None, ge=1, le=365)
+    action_id: int | None = None
+
+
+class ScheduleUpdateIn(Model):
+    scheduled_at: str | None = None
+    recurrence_days: int | None = Field(default=None, ge=1, le=365)
+    status: Literal["pending", "paused", "cancelled"] | None = None
 
 
 class EventIn(Model):
@@ -173,7 +187,12 @@ class EventIn(Model):
     source: str = ""
 
 
+class RetentionIn(Model):
+    confirm: bool = False
+
+
 class WorkLogIn(Model):
     hours: float = Field(ge=0, le=24)
     kind: str
     note: str = ""
+    work_date: str | None = None

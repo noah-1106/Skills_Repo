@@ -22,7 +22,8 @@ export function h(tag, attrs = {}, ...children) {
 
 export const clear = (node) => node.replaceChildren();
 export const text = (value, fallback = "—") => value === undefined || value === null || value === "" ? fallback : String(value);
-export const pct = (value) => `${Number(value || 0).toFixed(Number.isInteger(Number(value)) ? 0 : 1)}%`;
+export const pct = (value) => value === undefined || value === null || value === "" || !Number.isFinite(Number(value))
+  ? "—" : `${Number(value).toFixed(Number.isInteger(Number(value)) ? 0 : 1)}%`;
 
 export const labels = {
   draft: "草稿", reviewing: "审核中", frozen: "已冻结", retired: "已退役",
@@ -38,6 +39,13 @@ export const labels = {
   positive: "正向", neutral: "中性", negative: "负向", primary: "主品牌", competitor: "竞品",
   admin: "管理员", analyst: "分析师", reviewer: "客户审核者", viewer: "只读查看者",
   memory: "记忆态", search: "检索态", provider_api: "Provider API", consumer_web: "消费网页端", consumer_app: "消费 App",
+  active: "启用", inactive: "停用", open: "待处理", acknowledged: "已知悉", resolved: "已恢复",
+  blocked: "已阻塞", paused: "已暂停", healthy: "正常", unhealthy: "异常", unknown_health: "未检查",
+  info: "提示", warning: "警告", critical: "严重", error: "错误", demo: "演示", answer: "回答", judge: "Judge",
+  health: "健康检查", operation: "调用", daily: "每日", once: "单次", recurring: "周期", enabled: "已启用", disabled: "已停用",
+  brand: "品牌词", scene: "场景词", compare: "对比词", choice: "选购词", discovery: "发现型", navigation: "导航型",
+  client_confirmed: "客户已确认适用", eligible: "内部确认适用", not_eligible: "不适用",
+  "human-arbitrated": "管理员仲裁", "human-review": "人工修订", "demo-rules": "演示规则",
 };
 export const label = (value) => labels[value] || text(value);
 export function badge(value, tone) {
@@ -62,7 +70,9 @@ export function section(title, description, body, actions = []) {
 export function dataTable(headers, rows, empty = "当前没有记录") {
   if (!rows.length) return h("div", { class: "empty-state" }, h("p", {}, empty));
   return h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, headers.map((head) => h("th", { scope: "col" }, head)))),
-    h("tbody", {}, rows.map((cells) => h("tr", {}, cells.map((cell, index) => h("td", { class: index === 0 ? "wrap-cell" : "" }, cell)))))));
+    h("tbody", {}, rows.map((cells) => h("tr", {}, cells.map((cell, index) => h("td", {
+      class: index === 0 ? "wrap-cell" : "", "data-label": typeof headers[index] === "string" ? headers[index] : `第 ${index + 1} 列`,
+    }, cell)))))));
 }
 
 export function emptyState(title, description, action) {
@@ -76,10 +86,11 @@ export function errorState(error, retry) {
 
 export function metric(labelText, metricData, options = {}) {
   const limited = metricData?.limited;
+  const hasRatio = metricData && metricData.value !== null && metricData.value !== undefined;
   return h("div", { class: `metric-block${limited ? " limited" : ""}` },
     h("span", { class: "metric-label" }, labelText),
-    h("strong", { class: "metric-value num" }, metricData ? pct(metricData.value) : "—"),
-    h("small", {}, metricData ? `${metricData.hits}/${metricData.n} · Wilson ${metricData.ci_low}–${metricData.ci_high}%${limited ? " · 小样本" : ""}` : options.empty || "尚无有效样本"));
+    h("strong", { class: "metric-value num" }, limited ? `${metricData.hits}/${metricData.n}` : hasRatio ? pct(metricData.value) : "—"),
+    h("small", {}, metricData ? `${limited ? `${pct(metricData.value)} · ` : `${metricData.hits}/${metricData.n} · `}Wilson ${pct(metricData.ci_low)}–${pct(metricData.ci_high)}${limited ? " · 小样本仅看方向" : ""}` : options.empty || "尚无有效样本"));
 }
 
 export function field(labelText, control, help = "", full = false) {
@@ -111,38 +122,66 @@ export function toast(message, isError = false) {
   const node = document.getElementById("toast");
   node.textContent = message;
   node.className = `toast show${isError ? " error" : ""}`;
+  node.setAttribute("role", isError ? "alert" : "status");
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { node.className = "toast"; }, isError ? 6500 : 3500);
 }
 
+export function loadingSkeleton() {
+  return h("div", { class: "page-skeleton", role: "status", "aria-label": "正在读取项目数据" },
+    h("div", { class: "skeleton-heading" }, h("span"), h("span")),
+    h("div", { class: "skeleton-summary" }),
+    h("div", { class: "skeleton-grid" }, h("span"), h("span"), h("span"), h("span")),
+    h("div", { class: "skeleton-table" }, h("span"), h("span"), h("span")),
+    h("span", { class: "sr-only" }, "正在读取项目数据…"));
+}
+
+const drawerStack = [];
 export function drawer(title, content, options = {}) {
   const root = document.getElementById("drawer-root");
   const previousFocus = document.activeElement;
+  const background = document.getElementById("app-shell")?.hidden ? document.getElementById("login-view") : document.getElementById("app-shell");
+  const previousBackdrop = drawerStack.at(-1)?.backdrop;
+  if (previousBackdrop) previousBackdrop.inert = true;
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
+    const index = drawerStack.findIndex((entry) => entry.backdrop === backdrop);
+    if (index >= 0) drawerStack.splice(index, 1);
     backdrop.remove();
-    document.body.style.overflow = "";
+    if (previousBackdrop) previousBackdrop.inert = false;
+    if (!drawerStack.length) {
+      document.body.style.overflow = "";
+      if (background) background.inert = false;
+    }
     document.removeEventListener("keydown", onKeydown);
     if (previousFocus?.isConnected) previousFocus.focus();
     options.onClose?.();
   };
   const body = h("div", { class: "drawer-body" }, content);
-  const dialog = h("section", { class: `drawer${options.wide ? " wide-drawer" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": title },
-    h("div", { class: "drawer-head" }, h("h2", {}, title), h("button", { class: "drawer-close", "aria-label": "关闭", onClick: close }, "×")), body);
+  const titleId = `drawer-title-${Math.random().toString(36).slice(2, 9)}`;
+  const dialog = h("section", { class: `drawer${options.wide ? " wide-drawer" : ""}`, role: "dialog", "aria-modal": "true", "aria-labelledby": titleId },
+    h("div", { class: "drawer-head" }, h("h2", { id: titleId }, title), h("button", { class: "drawer-close", "aria-label": "关闭对话框", onClick: close }, "×")), body);
   const backdrop = h("div", { class: "drawer-backdrop", onClick: (event) => { if (event.target === backdrop && options.dismissible !== false) close(); } }, dialog);
   const onKeydown = (event) => {
-    if (event.key === "Escape" && options.dismissible !== false) close();
+    if (drawerStack.at(-1)?.backdrop !== backdrop) return;
+    if (event.key === "Escape" && options.dismissible !== false) { event.preventDefault(); close(); return; }
     if (event.key === "Tab") {
-      const focusable = [...dialog.querySelectorAll("button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex='0']")];
-      if (!focusable.length) return;
+      const focusable = [...dialog.querySelectorAll("button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),summary,[tabindex='0']")]
+        .filter((node) => !node.closest("[hidden],[inert]"));
+      if (!focusable.length) { event.preventDefault(); dialog.focus(); return; }
       const first = focusable[0], last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     }
   };
+  drawerStack.push({ backdrop });
   document.addEventListener("keydown", onKeydown);
   document.body.style.overflow = "hidden";
+  if (background) background.inert = true;
   root.append(backdrop);
-  requestAnimationFrame(() => dialog.querySelector("input,select,textarea,button")?.focus());
+  requestAnimationFrame(() => dialog.querySelector("input:not([type=hidden]),select,textarea,button")?.focus());
   return { body, close, dialog };
 }
 
@@ -184,10 +223,90 @@ export function safeLink(url, title) {
   } catch { return document.createTextNode(title || url || "—"); }
 }
 
+let pendingTabFocus = "";
 export function tabs(items, current, onChange) {
-  return h("div", { class: "tabs", role: "tablist" }, items.map((item) => h("button", {
-    role: "tab", "aria-selected": item.value === current, onClick: () => onChange(item.value),
-  }, item.label)));
+  const group = `tabs-${`${location.hash.split("?")[0]}-${items.map((item) => item.value).join("-")}`.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const selected = items.some((item) => item.value === current) ? current : items[0]?.value;
+  const list = h("div", { class: "tabs", role: "tablist", "aria-label": "当前页面任务" }, items.map((item, index) => {
+    const active = item.value === selected;
+    const button = h("button", {
+      id: `${group}-${index}`, role: "tab", type: "button", "aria-selected": active,
+      "aria-controls": `${group}-panel`, tabindex: active ? 0 : -1,
+      onClick: () => onChange(item.value),
+      onKeydown: (event) => {
+        const keys = { ArrowRight: 1, ArrowLeft: -1 };
+        let next;
+        if (event.key in keys) next = (index + keys[event.key] + items.length) % items.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = items.length - 1;
+        else return;
+        event.preventDefault();
+        pendingTabFocus = `${group}-${next}`;
+        onChange(items[next].value);
+      },
+    }, item.label);
+    return button;
+  }));
+  list.dataset.panelId = `${group}-panel`;
+  list.dataset.tabPrefix = group;
+  if (pendingTabFocus.startsWith(`${group}-`)) {
+    const target = pendingTabFocus;
+    pendingTabFocus = "";
+    requestAnimationFrame(() => document.getElementById(target)?.focus());
+  }
+  return list;
+}
+
+export function tabPanel(tablist, content) {
+  const active = tablist.querySelector("[aria-selected=true]");
+  return h("div", {
+    id: tablist.dataset.panelId, class: "tab-panel", role: "tabpanel", tabindex: 0,
+    "aria-labelledby": active?.id,
+  }, content);
+}
+
+export function budgetConfirmationDialog(error, retry) {
+  const detail = error.detail || {};
+  const reason = textarea("", { required: true, minlength: 4, rows: 4, placeholder: "说明本次超限仍需执行的业务原因" });
+  const form = h("form", {},
+    h("div", { class: "inline-panel warning-panel" }, h("h3", {}, "本次执行需要管理员确认"),
+      h("p", {}, detail.message || error.message),
+      detail.estimate?.max_estimated_cost !== undefined ? h("p", {}, `含安全重试的费用预估：${detail.estimate.max_estimated_cost} ${detail.estimate.currency || ""}`) : null),
+    field("超限执行理由", reason, "理由会与本次预算预留一起写入审计，不会修改预算额度"),
+    h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "确认超限并继续")));
+  const modal = drawer("预算超限确认", form);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try { await retry(reason.value); modal.close(); }
+    catch (caught) { formError(form, caught); }
+  });
+  return modal;
+}
+
+function budgetBlockedDialog(error) {
+  const detail = error.detail || {};
+  const content = h("div", {},
+    h("div", { class: "inline-panel danger-panel" }, h("h3", {}, "本次执行未创建"),
+      h("p", {}, detail.message || error.message),
+      (detail.unknown_reasons || []).length ? h("ul", {}, detail.unknown_reasons.map((reason) => h("li", {}, reason))) : null),
+    (detail.limits || []).length ? dataTable(["范围", "额度", "已用 + 在途", "本次后预估"], detail.limits.map((limit) => [limit.label, `${limit.limit} ${detail.currency}`, `${limit.used} ${detail.currency}`, limit.projected === null ? "成本未知" : `${limit.projected} ${detail.currency}`])) : null,
+    h("p", { class: "muted" }, detail.code === "budget_cost_unknown" ? "请先补齐实际使用的价格与币种；未知成本不会按零元放行。也可由管理员调整硬限额策略。" : "请由管理员提高额度或调整执行范围。硬限额只在执行前保护，不承诺在途调用绝不超额。"),
+    h("div", { class: "form-actions" },
+      h("button", { class: "button secondary", onClick: () => { modal.close(); location.hash = "#/admin?tab=engines"; } }, "检查引擎价格"),
+      h("button", { class: "button", onClick: () => { modal.close(); location.hash = "#/admin?tab=governance"; } }, "前往预算设置")));
+  const modal = drawer("预算阻止了本次执行", content, { wide: true });
+}
+
+export function handleBudgetError(error, retry) {
+  if (error?.detail?.code === "budget_confirmation_required") {
+    setTimeout(() => budgetConfirmationDialog(error, retry), 0);
+    return true;
+  }
+  if (["budget_exceeded", "budget_cost_unknown"].includes(error?.detail?.code)) {
+    setTimeout(() => budgetBlockedDialog(error), 0);
+    return true;
+  }
+  return false;
 }
 
 export function downloadJson(data, filename) {

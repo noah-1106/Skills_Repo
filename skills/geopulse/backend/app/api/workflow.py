@@ -77,7 +77,7 @@ def create_action(project_id: int, opportunity_id: int, payload: ActionIn, reque
 def list_actions(project_id: int, request: Request):
     context = project_context(request, project_id)
     with connect() as conn:
-        return {"items": all_rows(conn, "SELECT a.*,o.gap_type,o.eligibility FROM actions a JOIN opportunities o ON o.id=a.opportunity_id WHERE a.project_id=? ORDER BY a.updated_at DESC", (project_id,))}
+        return {"items": all_rows(conn, "SELECT a.*,o.gap_type,o.eligibility,o.wave_id AS opportunity_wave_id FROM actions a JOIN opportunities o ON o.id=a.opportunity_id WHERE a.project_id=? ORDER BY a.updated_at DESC", (project_id,))}
 
 
 @router.post("/actions/{action_id}/status")

@@ -69,8 +69,25 @@ def update_settings(project_id: int, payload: SettingsIn, request: Request):
     if set(payload.settings) - allowed:
         raise HTTPException(400, "包含不支持的设置字段")
     settings = {**loads(context["project"]["settings_json"], {}), **payload.settings}
+    budget = settings.get("budget") or {}
+    if not isinstance(budget, dict):
+        raise HTTPException(400, "预算设置格式不正确")
+    for key in ("amount", "wave_amount", "daily_amount"):
+        if budget.get(key) is not None and float(budget[key]) < 0:
+            raise HTTPException(400, "预算额度不能为负数")
+    currency = str(budget.get("currency") or "CNY")
+    if len(currency) != 3 or not currency.isalpha():
+        raise HTTPException(400, "预算币种必须是三位货币代码")
+    budget["currency"] = currency.upper()
     if not 0.5 <= float(settings.get("min_pair_completeness", 0.9)) <= 1:
         raise HTTPException(400, "配对完整度必须在 50%–100%")
+    retention_days = settings.get("retention_days")
+    if retention_days not in (None, "", 0, "0"):
+        try:
+            if int(retention_days) < 1:
+                raise ValueError
+        except (TypeError, ValueError) as error:
+            raise HTTPException(400, "保留天数必须为正整数；空值或 0 表示不自动清理") from error
     with connect() as conn:
         conn.execute("UPDATE projects SET settings_json=? WHERE id=?", (dumps(settings), project_id))
         audit(conn, context["user"]["id"], context["project"], "project", project_id, "settings",

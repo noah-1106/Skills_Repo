@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from backend.app.db import connect, one
-from backend.app.migrations import backup, current_version, restore
+from backend.app.migrations import SCHEMA_VERSION, backup, current_version, restore
 from backend.app.services.scheduler import run_due_schedules
 from conftest import api, demo_wave
 
@@ -95,7 +95,7 @@ def test_scheduler_backup_export_and_secret_exclusion(client, official_demo, tmp
         assert one(conn, "SELECT status,last_run_id FROM schedules WHERE id=?", (schedule["id"],))["status"] == "done"
         assert one(conn, "SELECT COUNT(*) AS count FROM runs WHERE wave_id=?", (wave_id,))["count"] == 2
     manifest = backup(tmp_path / "safe-backup.db")
-    assert manifest["schema_version"] == 1
+    assert manifest["schema_version"] == SCHEMA_VERSION
     restored = tmp_path / "restored.db"
     restore(tmp_path / "safe-backup.db", restored)
-    assert current_version(restored) == 1
+    assert current_version(restored) == SCHEMA_VERSION

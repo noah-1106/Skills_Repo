@@ -1,5 +1,5 @@
 import { api, query } from "../api.js";
-import { h, clear, pageHead, section, dataTable, badge, drawer, field, select, textarea, toast, formError, confirmDialog, formatDate, label, nextFrame, emptyState } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, drawer, field, select, textarea, toast, formError, confirmDialog, formatDate, label, nextFrame, emptyState, tabs, tabPanel, pct } from "../components.js";
 
 const metricNames = { coverage: "覆盖率", hit_rate: "稳定命中率", recommendation_coverage: "推荐覆盖率", effective_recommendation_rate: "有效推荐率", north_star: "北极星指标" };
 
@@ -10,20 +10,30 @@ export async function renderReports(root, ctx) {
   const official = waveData.items.filter((wave) => wave.official_run_id);
   const selectedReportId = Number(ctx.params.get("report"));
   const report = selectedReportId ? await api.get(`/api/projects/${ctx.project.id}/reports/${selectedReportId}`) : null;
-  const current = official.find((wave) => String(wave.id) === ctx.params.get("current")) || official[0];
+  const current = official.find((wave) => String(wave.id) === (ctx.params.get("current") || ctx.params.get("wave"))) || official[0];
   if (current) ctx.setProtocol({ promptSet: `ID ${current.protocol.prompt_set_id}`, entityVersion: current.protocol.entity_version,
     engines: current.protocol.engine_signature.map((engine) => engine.name).join(" / "), mode: current.protocol.mode,
     target: current.protocol.measurement_target, repeats: current.protocol.repeats, demo: current.protocol.engine_signature.every((engine) => engine.kind === "demo") });
   clear(root);
-  root.append(pageHead("对比与报告", "先判断两次测量能否严格比较，再阅读迁移。报告快照不可变，自动闸门不等于人工批准。",
-    [["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button", disabled: !waveData.items.length, onClick: () => createReportDialog(ctx, waveData.items) }, "创建报告快照") : null]));
-  renderComparison(root, ctx, official, eventData.items);
-  root.append(section("报告版本", "每次创建都会生成新的数据快照和 SHA-256；审批状态与事件独立留痕", dataTable(
-    ["版本", "Wave", "当前审批节点", "创建时间", "操作"], reportData.items.map((item) => [
-      `v${item.version} · #${item.id}`, item.wave_ids.join(" → "), badge(item.approval_status), formatDate(item.created_at, ctx.project.timezone),
-      h("button", { class: "table-link", onClick: () => ctx.navigate("reports", { report: item.id }) }, "打开报告"),
-    ]), "还没有报告。选择单个诊断 wave 或 baseline+current 两个 wave 创建快照。")));
-  if (report) renderReportDetail(root, ctx, report);
+  root.append(pageHead("对比与报告", "先确认两次测量能否严格比较，再阅读变化。报告快照不可变，自动检查通过后仍需管理员逐步审批。"));
+  const currentTab = ctx.params.get("tab") || (selectedReportId ? "delivery" : "compare");
+  const tablist = tabs([{ value: "compare", label: "变化对比" }, { value: "delivery", label: `报告交付 (${reportData.items.length})` }], currentTab,
+    (tab) => ctx.navigate("reports", { tab }));
+  root.append(tablist);
+  const panel = h("div", {});
+  if (currentTab === "compare") {
+    renderComparison(panel, ctx, official, eventData.items);
+  } else {
+    panel.append(section("报告版本", "选择当前版本处理审批与导出；每次创建都会生成新的数据快照和 SHA-256", dataTable(
+      ["版本", "Wave", "当前审批节点", "创建时间", "操作"], reportData.items.map((item) => [
+        `v${item.version} · #${item.id}`, item.wave_ids.join(" → "), badge(item.approval_status), formatDate(item.created_at, ctx.project.timezone),
+        h("button", { class: "table-link", onClick: () => ctx.navigate("reports", { tab: "delivery", report: item.id }) }, "打开报告"),
+      ]), "还没有报告。选择单个诊断 Wave 或基线 + 复测两个 Wave 创建快照。"),
+      [["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button", disabled: !waveData.items.length, onClick: () => createReportDialog(ctx, waveData.items) }, "创建报告快照") : null]));
+    if (report) renderReportDetail(panel, ctx, report);
+    else if (!reportData.items.length) panel.append(emptyState("从正式测量创建交付快照", "报告会固定当时的数据、证据和口径。后续审批不会改写数据快照。", null));
+  }
+  root.append(tabPanel(tablist, panel));
 }
 
 function renderComparison(root, ctx, waves, events) {
@@ -51,14 +61,22 @@ function renderComparison(root, ctx, waves, events) {
         ["持续提及", "持续缺席", "新增提及", "失去提及"].map((key) => h("div", { class: `transition-cell${key === "新增提及" ? " gain" : key === "失去提及" ? " loss" : ""}` },
           h("span", {}, key), h("strong", { class: "num" }, result.transition_counts[key]))),
       ]));
-      const chartNode = h("div", { class: "chart", role: "img", "aria-label": "基线与复测指标百分比对比图" }); output.append(chartNode);
-      output.append(h("h3", {}, "指标变化（百分点）"), dataTable(["指标", "基线", "复测", "变化", "相对变化"], Object.entries(result.delta).map(([key, row]) => [
-        metricNames[key] || key, `${row.baseline.value}% (${row.baseline.hits}/${row.baseline.n})`, `${row.current.value}% (${row.current.hits}/${row.current.n})`,
-        `${row.pp > 0 ? "+" : ""}${row.pp} pp`, row.relative === null ? "基线为 0，不计算" : `${row.relative}%`,
-      ])));
-      output.append(h("h3", {}, "逐意图迁移"), dataTable(["Prompt", "维度", "迁移"], result.transitions.map((row) => [row.prompt_text, row.dimension, row.change])));
+      const limited = Object.values(result.delta).some((row) => row.baseline.limited || row.current.limited);
+      if (limited) output.append(h("div", { class: "inline-panel warning-panel" }, h("h3", {}, "小样本仅观察方向"), h("p", {}, "以下以原始命中数 / 有效样本数为主，不输出确定性百分点或相对变化诊断。")));
+      const chartNode = limited ? null : h("div", { class: "chart", role: "img", "aria-label": "基线与复测指标百分比对比图" });
+      if (chartNode) output.append(chartNode);
+      output.append(h("h3", {}, limited ? "指标原始计数" : "指标变化（百分点）"), dataTable(limited ? ["指标", "基线", "复测", "变化"] : ["指标", "基线", "复测", "变化", "相对变化"], Object.entries(result.delta).map(([key, row]) => {
+        const rowLimited = limited || row.baseline.limited || row.current.limited;
+        const cells = [metricNames[key] || key,
+          rowLimited ? `${row.baseline.hits}/${row.baseline.n}` : `${pct(row.baseline.value)} (${row.baseline.hits}/${row.baseline.n})`,
+          rowLimited ? `${row.current.hits}/${row.current.n}` : `${pct(row.current.value)} (${row.current.hits}/${row.current.n})`,
+          rowLimited ? "仅观察方向" : `${row.pp > 0 ? "+" : ""}${row.pp} pp`];
+        if (!limited) cells.push(row.relative === null ? "基线为 0，不计算" : pct(row.relative));
+        return cells;
+      })));
+      output.append(h("h3", {}, "逐意图迁移"), dataTable(["Prompt", "维度", "迁移"], result.transitions.map((row) => [row.prompt_text, label(row.dimension), row.change])));
       await nextFrame();
-      if (window.echarts && ctx.isCurrent()) {
+      if (chartNode && window.echarts && ctx.isCurrent()) {
         const chart = window.echarts.init(chartNode);
         chart.setOption({ color: ["#8a9b93", "#116f61"], tooltip: { trigger: "axis" }, legend: { data: ["基线", "复测"] },
           grid: { left: 48, right: 20, top: 45, bottom: 50 }, xAxis: { type: "category", data: Object.keys(result.delta).map((key) => metricNames[key] || key), axisLabel: { interval: 0 } },
@@ -82,7 +100,7 @@ function createReportDialog(ctx, waves) {
     event.preventDefault();
     if (baseline.value && baseline.value === current.value) { formError(form, new Error("基线和当前 Wave 不能相同")); return; }
     const ids = baseline.value ? [Number(baseline.value), Number(current.value)] : [Number(current.value)];
-    try { const report = await api.post(`/api/projects/${ctx.project.id}/reports`, { wave_ids: ids }); modal.close(); toast(`报告 v${report.version} 已创建`); ctx.navigate("reports", { report: report.id }); }
+    try { const report = await api.post(`/api/projects/${ctx.project.id}/reports`, { wave_ids: ids }); modal.close(); toast(`报告 v${report.version} 已创建`); ctx.navigate("reports", { tab: "delivery", report: report.id }); }
     catch (error) { formError(form, error); }
   });
 }

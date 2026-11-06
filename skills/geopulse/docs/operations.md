@@ -50,7 +50,7 @@ export GEOPULSE_WORKERS=4
 curl --fail http://127.0.0.1:8700/api/health
 ```
 
-响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。
+响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。Search 和 Chat 健康调用会进入统一调用台账，同时保留业务分组 `kind=health` 与实际计费操作 `operation=search/answer`，因此运营成本和用量汇总不会漏掉健康检查。
 
 真实 smoke 执行前逐项确认：
 
@@ -61,7 +61,7 @@ curl --fail http://127.0.0.1:8700/api/health
 5. 当前价格规则和最大可能费用；
 6. 超时结果不明时不自动重放。
 
-CI、pytest、浏览器 smoke 和 2700 压力脚本均不执行真实付费调用。Kimi Search 合同 mock 通过不等于外部账号 live smoke 通过。
+CI、pytest、浏览器 smoke/governance 和 2700 压力脚本均不执行真实付费调用。Kimi Search 合同 mock 通过不等于外部账号 live smoke 通过。DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行。后续真实 smoke 仍需独立预估和即时确认，既有确认不自动延伸到新调用。
 
 ## 4. 队列与调度
 
@@ -72,6 +72,21 @@ CI、pytest、浏览器 smoke 和 2700 压力脚本均不执行真实付费调�
 - 可安全重试错误最多按 Wave 协议自动重试；超时等结果不明错误需管理员重试。
 - 活跃 Run 未结束时，调度器不会为同一 Wave 重复入队。
 - 正式 Run 仍由管理员人工指定，调度不会自动替换。
+- 调度支持单次、每 7/14/28 天和自定义周期；可在 UI 编辑、暂停、恢复或取消。
+- 周期任务每次只执行一次到期测量，再推进到未来，不在停机后突发补跑全部过期周期。
+- 调度认领、Run 创建、预算预留和下次时间推进位于同一可回滚事务内；失败保留诊断状态并生成告警。
+- 调度遇到软预算确认、硬预算或未知成本时进入 `blocked`，不会代替管理员确认超限。处理价格/额度后使用“处理后再试”。
+- Action 的“安排复测”会创建真实 Schedule；“确认改善”要求另一轮 Wave 的正式 Run 和严格同口径比较，不能用来源基线自我复测。
+
+### 预算执行语义
+
+项目累计、Wave 冻结额度和项目时区每日额度统一适用于手工 Run、失败样本重试、调度和健康检查。排队时使用 `budget_reservations` 记录在途预估，完成、取消或失败后按真实 usage 对账并释放，避免多个排队 Run 同时绕过额度。
+
+- 默认只展示预估，不启用预算阻断。
+- 启用检查后，软预算超限需要管理员针对本次执行填写理由；理由和确认进入预留与审计，不修改额度。
+- 硬预算在执行前拒绝；缺失价格、缺失必要 usage 或混合币种不会按零成本放行。
+- 基础调用数与含安全重试的调用次数上限分开显示；token 和金额仍是启发式预估。
+- 硬限额是执行前保护，不承诺已经发出的在途厂商调用绝不超额。
 
 只运行独立 worker 时，可先以 `GEOPULSE_DISABLE_WORKER=1` 启动 Web，再运行：
 
@@ -106,7 +121,7 @@ CI、pytest、浏览器 smoke 和 2700 压力脚本均不执行真实付费调�
 shasum -a 256 /path/to/backup.db
 ```
 
-将结果与 manifest 的 `sha256` 比较。当前 restore 命令检查 schema，但不会替人工判断备份是否选错；恢复前必须核对项目、时间和 checksum。
+将结果与 manifest 的 `sha256` 比较。restore 会要求备份旁的相邻 manifest，并校验 SHA-256、schema 版本和 SQLite `integrity_check`；先在同目录临时文件上恢复和验证，再原子替换目标。任何校验失败都不会修改现有数据库。命令仍不能替人工判断备份是否选错，恢复前必须核对项目、时间和 checksum。
 
 ## 6. 恢复演练与正式恢复
 
@@ -141,7 +156,7 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py migrate
 ```
 
-当前干净 v2 schema 的 `PRAGMA user_version=1`。程序拒绝静默打开未知旧版本或更新版本。未来迁移必须先备份、按顺序执行并记录 checksum；本版本不迁移旧 v1 回答数据。
+当前 schema 为 v2，`PRAGMA user_version=2`。迁移按 `001_v2.sql`、`002_execution_governance.sql` 顺序执行并记录 checksum。程序拒绝静默打开未知旧版本或更新版本。未来迁移必须先备份；本版本不迁移旧 v1 回答数据。
 
 ## 8. 项目导出与删除
 
@@ -152,17 +167,24 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 
 导出包含 schema、项目业务表、导出时间和 SHA-256，不含 secret store。删除会级联删除该项目业务数据；已有备份不会被自动删除，需按保留策略处理。UI 删除要求输入完整项目名。
 
-## 9. 日志、成本与告警
+## 9. 原文保留与清理
+
+`retention_days` 留空或为 0 时不自动清理。管理员显式配置后，维护任务按项目隔离处理到期原文；UI 可先预览 cutoff 和候选数，再确认执行并记录审计。
+
+清理只移除原始回答正文与敏感载荷，保留 `valid_sample`、observation、usage、状态和聚合所需元数据，并留下原文 tombstone。历史指标不会因正文为空而被改成零提及；清理后禁止新增依赖原文的 revision。旧报告快照保持不变，但包含已清理证据的新报告不能通过原文证据发布闸门。
+
+## 10. 日志、成本与告警
 
 HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业务表保存 project/wave/run 关联，调用记录保存类型、模型、usage、延迟、成本和错误。
 
 - 不在日志中输出 API key、密码、session token。
 - reviewer/viewer 响应隐藏原始回答、内部成本和内部错误细节。
-- 成本按 answer/judge/search 分列；未知价格不按零成本。
-- 默认预算只提醒；显式硬限额需要管理员另行开启。
-- Run partial/failed 会生成告警，缺失样本始终不能转成零提及。
+- 成本按 answer/judge/search 和业务类型分列，并按币种分别汇总；未知价格和未知 usage 单独计数，不按零成本。
+- 金额使用真实 usage 与管理员价格规则估算，不是厂商账单；SQLite 文件大小是全库大小，不是单项目占用，工时为手工登记。
+- 默认预算只提醒；软超限逐次确认，显式硬限额在执行前拒绝。
+- Run partial/failed、样本不足、Judge 降级、预算、调度、备份和维护失败会生成告警。开放告警默认只列未确认项，历史单独查看，确认和恢复分别记录。
 
-## 10. 故障排查
+## 11. 故障排查
 
 | 症状 | 检查 | 下一步 |
 |---|---|---|
@@ -172,11 +194,13 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 | Run 全部失败 | 引擎错误类型、模型、Base URL、账号额度 | 修正配置后由管理员明确重试 |
 | Search 失败 | Search operation 与错误前缀 | 不用 memory 补位，检查检索权限与协议 |
 | Judge 降级 | `judge_fallback_rate`、JSON/证据错误 | 复核 pending 样本，黄金集通过后再升级 Judge |
+| 调度 blocked | 告警详情中的预算或执行错误 | 软预算不能自动确认；补齐价格/调整额度后“处理后再试” |
+| Run 被硬预算拒绝 | 项目/Wave/每日额度、active reservation、未知价格 | 管理员调整额度或执行范围；未知成本先补价，不能按 0 元绕过 |
 | 对比被拒绝 | mismatches、pair/sample completeness | 使用同口径正式 Run，不能事后放宽冻结阈值 |
 | PDF 失败 | Chrome/Chromium 是否安装 | 设置 `CHROME_PATH` 后重试 |
 | 数据库锁定 | 多写入进程、长事务、磁盘状态 | 保持单节点写入，检查慢操作与磁盘 |
 
-## 11. 安全更新
+## 12. 安全更新
 
 ```bash
 .venv/bin/pip-audit -r requirements-dev.txt
@@ -184,4 +208,4 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 .venv/bin/python -m pytest -q
 ```
 
-CI 还执行前端 ESM、真实浏览器、黄金集、模拟压力和 secret scanning。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。
+CI 还执行前端 ESM、两套真实浏览器、黄金集、模拟压力和 secret scanning。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。

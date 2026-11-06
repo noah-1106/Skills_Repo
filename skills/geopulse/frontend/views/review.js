@@ -13,7 +13,7 @@ export async function renderReview(root, ctx) {
   }
   const runEntry = allRuns.find((item) => item.id === selectedId) || allRuns[0];
   const runId = runEntry.id;
-  const filters = { status: ctx.params.get("status") || "", review: ctx.params.get("review") || "", limit: 200 };
+  const filters = { status: ctx.params.get("status") || "", review: ctx.params.has("review") ? ctx.params.get("review") : "pending", limit: 200 };
   const answerData = await api.get(`/api/projects/${ctx.project.id}/runs/${runId}/answers${query(filters)}`);
   const selectedAnswerId = Number(ctx.params.get("answer")) || answerData.items[0]?.id;
   const detail = selectedAnswerId ? await api.get(`/api/projects/${ctx.project.id}/answers/${selectedAnswerId}`) : null;
@@ -28,7 +28,7 @@ export async function renderReview(root, ctx) {
   const runSelect = select(allRuns.map((item) => ({ value: item.id, label: `${item.wave.label} · Run #${item.id} · ${label(item.status)}` })), runId, { "aria-label": "选择 Run" });
   runSelect.addEventListener("change", () => ctx.navigate("review", { run: runSelect.value }));
   const statusFilter = select([{ value: "", label: "全部回答状态" }, { value: "succeeded", label: "成功" }, { value: "failed", label: "失败" }, { value: "cancelled", label: "取消" }, { value: "judging", label: "判定中" }], filters.status);
-  const reviewFilter = select([{ value: "", label: "全部复核状态" }, { value: "pending", label: "仅看待复核" }], filters.review);
+  const reviewFilter = select([{ value: "all", label: "全部复核状态" }, { value: "pending", label: "仅看待复核" }], filters.review);
   const applyFilters = () => ctx.navigate("review", { run: runId, status: statusFilter.value, review: reviewFilter.value });
   statusFilter.addEventListener("change", applyFilters); reviewFilter.addEventListener("change", applyFilters);
   root.append(h("div", { class: "filters" }, field("Run", runSelect), field("回答状态", statusFilter), field("复核状态", reviewFilter),
@@ -39,10 +39,12 @@ export async function renderReview(root, ctx) {
       return h("button", { class: `list-item${answer.id === selectedAnswerId ? " active" : ""}`, onClick: () => ctx.navigate("review", { run: runId, answer: answer.id, status: filters.status, review: filters.review }) },
         h("strong", {}, `#${answer.id} · ${answer.prompt_text}`), h("small", {}, `${answer.engine_name} · Round ${answer.round_no} · ${label(answer.status)}`),
         pending ? h("span", { class: "cell-sub" }, `${pending} 个实体待复核`) : null);
-    }) : h("div", { class: "empty-state" }, h("p", {}, "当前筛选没有回答。调整状态筛选，或先处理失败样本。")));
+    }) : h("div", { class: "empty-state" }, h("p", {}, filters.review === "pending" ? "当前 Run 没有待复核回答。可以查看全部回答，或先处理失败样本。" : "当前筛选没有回答。请调整状态筛选。"),
+      filters.review === "pending" ? h("button", { class: "button secondary", onClick: () => ctx.navigate("review", { run: runId, review: "all", status: filters.status }) }, "查看全部回答") : null));
   const pane = h("div", { class: "detail-pane" });
+  pane.append(h("button", { class: "button secondary mobile-back", onClick: () => ctx.navigate("review", { run: runId, status: filters.status, review: filters.review }) }, "返回回答清单"));
   if (detail) renderAnswerDetail(pane, ctx, detail, filters);
-  root.append(h("div", { class: "split-layout wide-left" }, rail, pane));
+  root.append(h("div", { class: `split-layout wide-left evidence-browser${ctx.params.has("answer") ? " has-detail" : ""}` }, rail, pane));
 }
 
 function renderAnswerDetail(root, ctx, answer, filters) {
@@ -54,14 +56,14 @@ function renderAnswerDetail(root, ctx, answer, filters) {
   const rawPanel = h("section", {}, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, `#${answer.id} · 原始回答`), h("p", {}, `${answer.engine_name || answer.model} · Round ${answer.round_no} · ${formatDate(answer.completed_at, ctx.project.timezone)}`)), badge(answer.status)),
     h("p", { class: "muted" }, answer.prompt_text),
     answer.raw_text ? h("div", { class: "raw-answer" }, answer.raw_text) : h("div", { class: "inline-panel warning-panel" },
-      h("h3", {}, answer.status === "failed" ? "没有有效回答原文" : "原文不可见"),
-      h("p", {}, answer.status === "failed" ? `${answer.error_type || "执行失败"}。失败样本不能解释为零提及；请由管理员确认是否重试。` : "当前角色可查看实体证据与状态，但不能读取内部原始回答。")),
+      h("h3", {}, answer.content_retained === 0 ? "原文已按保留策略清理" : answer.status === "failed" ? "没有有效回答原文" : "原文不可见"),
+      h("p", {}, answer.content_retained === 0 ? "判定、有效样本事实和聚合指标仍保留；不能再新增依赖原文的 revision，新报告也无法通过原文证据闸门。" : answer.status === "failed" ? `${answer.error_type || "执行失败"}。失败样本不能解释为零提及；请由管理员确认是否重试。` : "当前角色可查看实体证据与状态，但不能读取内部原始回答。")),
     answer.citations.length ? h("div", { class: "inline-panel" }, h("h3", {}, "Provider 实际返回的来源"), answer.citations.map((citation) => h("p", {}, safeLink(citation.final_url || citation.raw_url, citation.title || citation.domain), h("span", { class: "cell-sub" }, `${citation.source_type} · ${citation.domain}`)))) : h("p", { class: "muted small" }, "未暴露可核验来源；不会补造 URL。"));
   const observations = h("section", {}, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, "实体判定"), h("p", {}, `${latest.size} 个冻结实体 · 原文不会因修订改变`))));
   latest.forEach((versions) => {
     const current = versions[0];
     const panel = h("article", { class: `observation ${current.entity_status === "confirmed" ? "confirmed" : current.review_status === "pending" ? "pending" : ""}` },
-      h("div", { class: "observation-head" }, h("div", {}, h("h3", {}, current.name), h("span", { class: "cell-sub" }, `${label(current.role)} · ${current.judge_status}`)), badge(current.entity_status)),
+      h("div", { class: "observation-head" }, h("div", {}, h("h3", {}, current.name), h("span", { class: "cell-sub" }, `${label(current.role)} · ${label(current.judge_status)}`)), badge(current.entity_status)),
       h("div", { class: "button-group" }, badge(current.depth), badge(current.sentiment), current.top_choice ? badge("Top Choice", "info") : null, badge(current.review_status)),
       current.evidence ? h("blockquote", { class: "observation-evidence" }, current.evidence) : h("p", { class: "muted small" }, "无有效证据句"),
       current.citation_urls.length ? h("p", {}, current.citation_urls.map((url) => safeLink(url))) : null,

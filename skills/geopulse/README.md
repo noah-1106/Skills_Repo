@@ -13,7 +13,9 @@ GeoPulse 是一个自托管的 GEO 客户交付工作台：冻结问题与实体
 5. **证据复核**：原文与当前 observation 并排、来源、Judge 元数据、revision 历史与人工修订。
 6. **机会与行动**：候选适用性审核、冻结权重评分、七步 Action、真实发布证据、复测和关闭。
 7. **对比与报告**：协议与样本完整度检查、配对迁移、ECharts、不可变快照、三级审批、HTML/PDF。
-8. **系统管理**：引擎、显式付费健康检查、成员角色、调度、告警、成本、工时、预算、备份、导出和审计。
+8. **系统管理**：引擎、显式付费健康检查、成员角色、单次/周期调度、告警确认与恢复、成本、手工工时、软/硬预算、原文保留、备份、导出和审计。
+
+逐项的“界面 → API → 持久化 → 执行器 → 权限 → 测试”对照，以及仅 CLI 和未覆盖能力，见 [docs/feature-matrix.md](docs/feature-matrix.md)。
 
 ## 快速开始
 
@@ -43,7 +45,7 @@ Demo 使用本地确定性回答，不访问外部模型，不代表真实 AI �
 
 Search 失败、无结果或协议异常不会降级成 memory。模型 ID 和 Base URL 以管理员账号实际可用配置为准。密钥保存在独立 `backend/secrets.json`（0600），数据库只保存引用，项目导出会清空该引用且不包含密钥，API 不回显明文。
 
-真实健康检查必须再次确认；创建真实 Run 前展示调用与成本预估。默认不做硬预算阻断，未知价格不按零成本处理。真实厂商 smoke 不在测试或 CI 中自动执行。
+真实健康检查必须再次确认；创建真实 Run 前展示基础调用和含安全重试的调用/费用预估。默认不启用硬预算阻断；启用后，软预算超限需要管理员逐次填写理由，硬预算在执行前拒绝，调度遇到需人工确认的预算状态会阻塞并告警。未知价格不按零成本处理，金额是按实际 usage 和管理员价格规则计算的估算，不是厂商账单。真实厂商 smoke 不在测试或 CI 中自动执行。
 
 ## 测量口径
 
@@ -112,6 +114,9 @@ done
 # 隔离数据库、动态端口、真实 Chrome 八工作流与只读角色
 .venv/bin/python tests/browser_smoke.py
 
+# 真实 Chrome 预算、调度、告警、保留、工时、键盘和移动治理验收
+.venv/bin/python tests/browser_governance.py
+
 # 离线黄金集：准确率、召回率、F1、混淆矩阵与引用合同
 .venv/bin/python scripts/geopulse_ctl.py golden-eval \
   --out test-results/golden-eval.json
@@ -126,7 +131,7 @@ done
 
 浏览器和 stress 脚本使用临时数据库，不读取真实旧配置，不终止未知服务进程。测试截图和报告位于被忽略的 `test-results/`。
 
-**当前验证边界**：Kimi Search 协议、错误处理和 OpenAI-compatible 截断处理使用 mock 验证；尚未执行真实 DeepSeek/Kimi 外部账号 smoke。离线黄金集是小型回归集，不是生产 LLM 准确率声明。真实 smoke 需要另行确认账号、模型、调用次数和费用。
+**当前验证边界**：Kimi Search 协议、错误处理和 OpenAI-compatible 截断处理使用 mock 验证。DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 尚未验证；Kimi live 未执行。离线黄金集是小型回归集，不是生产 LLM 准确率声明。真实 smoke 需要另行确认账号、模型、调用次数和费用，本轮功能验收不会自动产生付费调用。
 
 ## 目录
 

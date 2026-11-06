@@ -50,7 +50,9 @@ export GEOPULSE_EXPORT_DIR="$HOME/.geopulse/v2/exports"
 5. **证据复核**：原文与 observation、Judge 元数据、引用和追加式人工 revision。
 6. **机会与行动**：管理员确认适用性、冻结权重评分、七步 Action、真实发布和复测。
 7. **对比与报告**：协议与有效样本完整度、配对迁移、ECharts、不可变快照、三级审批、HTML/PDF。
-8. **系统管理**：引擎、成员角色、调度、告警、成本、工时、预算、审计、备份、导出和删除。
+8. **系统管理**：引擎、成员角色、单次/周期调度、告警确认与恢复、成本、手工工时、软/硬预算、原文保留、审计、备份、导出和删除。
+
+逐项“界面 → API → 持久化 → 执行器 → 权限 → 测试”见 `docs/feature-matrix.md`。
 
 ## 真实引擎与费用
 
@@ -62,7 +64,9 @@ export GEOPULSE_EXPORT_DIR="$HOME/.geopulse/v2/exports"
 
 Search 失败、无结果或协议异常不会静默降级 memory。真实健康检查和真实 Run 可能产生厂商费用，执行前必须核对账号、模型、Base URL、调用次数和预估费用；不要替用户自动确认付费调用。API key 只保存在 0600 secret store，数据库仅存引用，项目导出清空引用。
 
-当前通过的是 Kimi/OpenAI-compatible 协议 mock，尚未完成真实 DeepSeek/Kimi 外部账号 smoke。
+预算覆盖项目累计、Wave 冻结额度和项目时区每日额度，并记录排队任务的在途预留。默认不启用阻断；软预算超限需要管理员逐次填写理由，硬预算和未知成本在执行前拒绝，调度不能自动确认超限而会进入 `blocked`。成本金额是实际 usage + 管理员价格规则的估算，不是厂商账单。
+
+DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行，当前通过的是 Search/Chat 协议 mock。后续真实付费调用仍需单独预估和即时确认。
 
 ## 测量与权限边界
 
@@ -74,6 +78,8 @@ Search 失败、无结果或协议异常不会静默降级 memory。真实健康
 - 实体审核、机会适用性、正式 Run、报告审批/发送登记和项目删除仅管理员可执行。
 - reviewer/viewer 不读取原始回答、内部成本或内部版报告。
 - 报告发送只是人工登记，不自动向外部服务发送。
+- 原文默认不自动清理；显式配置保留天数后，只清理到期正文并保留有效样本、判定、usage 和聚合元数据。
+- Action 改善/未改善结论要求另一轮 Wave 的正式 Run 和严格同口径比较，来源基线不能作为自己的复测目标。
 
 公式见 `docs/metrics.md`，架构见 `docs/v2-architecture.md`。
 
@@ -93,7 +99,7 @@ Search 失败、无结果或协议异常不会静默降级 memory。真实健康
 .venv/bin/python scripts/geopulse_ctl.py delete-project 1 --confirm '完整项目名'
 ```
 
-单节点 SQLite 不提供多节点高可用。RPO 24h/RTO 4h 只是内部开发基线，不是客户 SLA；secret store 需要独立加密备份。完整部署与恢复步骤见 `docs/operations.md`。
+单节点 SQLite 不提供多节点高可用。RPO 24h/RTO 4h 只是内部开发基线，不是客户 SLA；secret store 需要独立加密备份。恢复要求相邻 manifest、SHA-256、schema 和 SQLite integrity check，先验证临时文件再原子替换。完整部署与恢复步骤见 `docs/operations.md`。
 
 ## 验证
 
@@ -109,10 +115,11 @@ done
 .venv/bin/python scripts/geopulse_ctl.py golden-eval --out test-results/golden-eval.json
 .venv/bin/python tests/stress_simulated.py
 .venv/bin/python tests/browser_smoke.py
+.venv/bin/python tests/browser_governance.py
 ```
 
 浏览器与压力脚本使用临时数据库和动态端口，不读取真实旧配置，不终止未知服务进程，不调用真实付费 Provider。离线黄金集只是小型回归集，不代表生产 LLM Judge 准确率；2700 次压力调用全部来自 DemoProvider。
 
 ## 版本
 
-v2.0.0 · 2026-11-06 · 多客户隔离、八条交付工作流、Kimi Search + Chat、证据 revision、严格比较、机会行动、不可变报告和完整离线验收。
+v2.0.1 · 2026-11-07 · 在 v2 多客户隔离、八条交付工作流和不可变报告基础上，补齐预算、调度、告警、原文保留和复测执行闭环，重建任务型桌面/移动前端与治理浏览器验收。

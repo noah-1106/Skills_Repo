@@ -28,6 +28,9 @@ def ratio(hits: int, total: int, stats: dict, value: float | None = None) -> dic
 
 
 def _valid(sample: dict) -> bool:
+    persisted = sample.get("valid_sample")
+    if persisted is not None:
+        return bool(persisted)
     return sample.get("status") == "succeeded" and bool(sample.get("raw_text"))
 
 

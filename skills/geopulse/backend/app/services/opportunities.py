@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from ..db import all_rows, dumps, loads, one, utc_now
@@ -138,12 +138,58 @@ def transition_action(conn, action: dict, new_status: str, actor: int, payload: 
             raise HTTPException(400, "发布 URL 必须是有效的 HTTP(S) 地址")
         extra = {"published_at": payload["published_at"], "published_url": payload["published_url"],
                  "artifact_version": payload.get("artifact_version") or action["artifact_version"]}
-    if new_status == "remeasure_due" and not (payload.get("target_wave_id") or action["target_wave_id"]):
-        raise HTTPException(400, "进入复测前必须选择目标 wave")
-    extra["target_wave_id"] = payload.get("target_wave_id") or action["target_wave_id"]
+    target_wave_id = payload.get("target_wave_id") or action["target_wave_id"]
+    if new_status == "remeasure_due":
+        if not target_wave_id:
+            raise HTTPException(400, "进入复测前必须选择目标 wave")
+        published = action.get("published_at") or payload.get("published_at")
+        if not published:
+            raise HTTPException(409, "只有已发布 Action 可以安排复测")
+        anchor = datetime.fromisoformat(published.replace("Z", "+00:00"))
+        next_run = (anchor.astimezone(timezone.utc) + timedelta(days=int(payload.get("remeasure_days") or 14))).isoformat(timespec="seconds")
+        existing = one(conn, "SELECT * FROM schedules WHERE action_id=? AND wave_id=? AND status NOT IN ('cancelled','done')",
+                       (action["id"], target_wave_id))
+        if existing:
+            conn.execute("UPDATE schedules SET scheduled_at=?,next_run_at=?,anchor_at=?,status='pending',next_retry_at=NULL,updated_at=? WHERE id=?",
+                         (next_run, next_run, published, utc_now(), existing["id"]))
+        else:
+            conn.execute("INSERT INTO schedules(client_id,project_id,wave_id,scheduled_at,next_run_at,anchor_at,action_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                         (action["client_id"], action["project_id"], target_wave_id, next_run, next_run,
+                          published, action["id"], utc_now(), utc_now()))
+    comparison = None
+    if new_status in ("verified", "not_effective"):
+        target = one(conn, "SELECT * FROM waves WHERE id=? AND project_id=?", (target_wave_id, action["project_id"]))
+        opportunity = one(conn, "SELECT * FROM opportunities WHERE id=?", (action["opportunity_id"],))
+        baseline = one(conn, "SELECT * FROM waves WHERE id=?", (opportunity["wave_id"],))
+        if not target or not target.get("official_run_id"):
+            raise HTTPException(409, "目标 Wave 尚未由管理员指定正式 Run，不能确认复测结果")
+        if target["id"] == baseline["id"]:
+            raise HTTPException(409, "复测目标不能是机会来源的基线 Wave，请先执行并指定另一轮正式测量")
+        from .reporting import wave_metrics
+        before, before_protocol, _ = wave_metrics(conn, baseline)
+        after, after_protocol, _ = wave_metrics(conn, target)
+        from ..engine.compare import compare_metrics
+        comparison = compare_metrics(before, after, before_protocol, after_protocol,
+                                     float(loads(target["stats_json"], {}).get("min_pair_completeness", 0.9)))
+        if not comparison.get("comparable"):
+            raise HTTPException(409, comparison.get("reason") or "目标 Wave 与基线不能严格比较")
+        delta = comparison["delta"]
+        if opportunity["gap_type"] == "被贬":
+            improved = after["negative_risk_rate"]["value"] < before["negative_risk_rate"]["value"]
+        elif opportunity["gap_type"] == "深度落后":
+            improved = delta["effective_recommendation_rate"]["pp"] > 0 or delta["hit_rate"]["pp"] > 0
+        else:
+            improved = delta["coverage"]["pp"] > 0 or delta["hit_rate"]["pp"] > 0
+        if new_status == "verified" and not improved:
+            raise HTTPException(409, "同口径正式 Run 未显示对应指标改善；可记录为无效并补充说明")
+    extra["target_wave_id"] = target_wave_id
     after = transition(conn, "actions", action, new_status, actor, payload.get("reason") or "", extra)
+    if comparison:
+        audit(conn, actor, action, "action", action["id"], "remeasurement_verified", None,
+              {"target_wave_id": target_wave_id, "official_run_id": target["official_run_id"],
+               "delta": comparison["delta"], "interpretation": comparison["interpretation"]})
     if new_status == "published":
         conn.execute("INSERT INTO external_events(client_id,project_id,event_at,kind,description,source,created_by,created_at) VALUES(?,?,?,?,?,?,?,?)",
                      (action["client_id"], action["project_id"], after["published_at"], "内容发布",
-                      f"Step {action['geo_step']}：{action['title']}", after["published_url"], actor, utc_now()))
+                      f"第 {action['geo_step']} 步：{action['title']}", after["published_url"], actor, utc_now()))
     return after

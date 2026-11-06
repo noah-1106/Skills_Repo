@@ -25,10 +25,14 @@ export async function renderPrompts(root, ctx) {
     actions.push(h("button", { class: "button secondary", onClick: () => importDialog(ctx, current) }, "导入 JSON / CSV"));
     actions.push(h("button", { class: "button", onClick: () => changeStatus(ctx, current, "reviewing") }, "进入审核"));
   }
-  if (current.status === "reviewing" && ctx.role === "admin") actions.push(h("button", { class: "button", disabled: pending > 0, title: pending ? "仍有题目待逐条审核" : "审核完成，可以冻结", onClick: () => changeStatus(ctx, current, "frozen") }, "冻结此版本"));
+  if (current.status === "reviewing" && ctx.role === "admin") {
+    const next = activeItems.find((item) => !["reviewed", "frozen"].includes(item.status));
+    actions.push(next ? h("button", { class: "button", onClick: () => reviewDialog(ctx, current, next, "reviewed") }, `继续审核 · 还剩 ${pending} 条`)
+      : h("button", { class: "button", onClick: () => changeStatus(ctx, current, "frozen") }, "冻结此版本"));
+  }
   if (current.status === "frozen") actions.push(h("button", { class: "button", onClick: async () => { const copy = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/copy`, {}); toast("已复制为新草稿"); refreshSet(ctx, copy.id); } }, "复制为新版本"));
   clear(root);
-  root.append(pageHead("问题集工作台", "把自然问法归入同一 canonical intent；冻结后文本、分层与适用性不再修改。", actions));
+  root.append(pageHead("问题集工作台", "把自然问法归入同一业务意图；冻结后文本、分层与适用性不再修改。", actions));
   root.append(h("div", { class: "inline-panel emphasis" }, h("div", { class: "form-grid" }, field("当前版本", setSelector),
     h("div", {}, h("h2", {}, current.status === "frozen" ? "这是不可变测量版本" : pending ? `还有 ${pending} 条待审核` : "题目已完成逐条审核"),
       h("p", { class: "muted" }, current.status === "frozen" ? `冻结于 ${current.frozen_at || "—"} · 内容哈希 ${current.content_hash.slice(0, 12)}。如需修改，请复制新版本。`
@@ -38,16 +42,16 @@ export async function renderPrompts(root, ctx) {
       h("div", {}, h("dt", {}, "发现 / 导航"), h("dd", {}, `${activeItems.filter((item) => item.query_type === "discovery").length} / ${activeItems.filter((item) => item.query_type === "navigation").length}`)))));
 
   const rows = current.items.map((item) => [
-    h("div", {}, h("div", { class: "cell-title" }, item.text), h("span", { class: "cell-sub" }, `${item.canonical_intent_id} · ${item.scenario || "未设置场景"}`)),
-    h("div", {}, dimensions[item.dimension], h("span", { class: "cell-sub" }, item.query_type === "discovery" ? "发现型" : "导航型")),
-    `P${item.priority}`, h("div", {}, badge(item.status), h("span", { class: "cell-sub" }, item.eligibility)),
+    h("button", { class: "table-link", onClick: () => promptDetail(ctx, current, item) }, item.text),
+    dimensions[item.dimension], badge(item.status),
     ctx.role === "admin" && ["draft", "reviewing"].includes(current.status) ? h("div", { class: "button-group" },
       !["reviewed", "frozen"].includes(item.status) ? h("button", { class: "button small-button", onClick: () => reviewDialog(ctx, current, item, "reviewed") }, "通过") : null,
       item.status !== "rejected" ? h("button", { class: "button small-button secondary", onClick: () => reviewDialog(ctx, current, item, "rejected") }, "排除") : null,
       item.status === "rejected" ? h("button", { class: "button small-button secondary", onClick: () => reviewDialog(ctx, current, item, "draft") }, "恢复") : null) : h("span", { class: "muted" }, current.status === "frozen" ? "只读" : "由管理员审核"),
   ]);
-  root.append(section(`题目清单 · ${current.items.length} 条`, "审核动作只改变当前草稿；已排除题目不进入冻结内容", dataTable(
-    ["Prompt / Canonical intent", "维度 / 类型", "优先级", "状态 / 适用性", "操作"], rows)));
+  const promptTable = dataTable(["题目", "维度", "状态", "操作"], rows);
+  promptTable.classList.add("prompt-table");
+  root.append(section(`题目清单 · ${current.items.length} 条`, "选择题名查看技术口径；审核动作只改变当前草稿，已排除题目不进入冻结内容", promptTable));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "版本 diff 与导出"), h("div", {},
     h("div", { class: "button-group" },
       h("button", { class: "button secondary", onClick: () => diffDialog(ctx, sets, current) }, "比较两个版本"),
@@ -55,6 +59,25 @@ export async function renderPrompts(root, ctx) {
       h("button", { class: "button secondary", onClick: async () => downloadJson(await api.get(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/export?format=json`), `prompt-set-${current.id}.json`) }, "导出 JSON"),
       current.status === "frozen" && ctx.role === "admin" ? h("button", { class: "button danger", onClick: () => changeStatus(ctx, current, "retired", true) }, "退役版本") : null),
     h("p", { class: "muted small" }, "导出文件含完整 Prompt，请按客户资料管理；不包含引擎密钥。"))));
+}
+
+function promptDetail(ctx, current, item) {
+  const canReview = ctx.role === "admin" && ["draft", "reviewing"].includes(current.status);
+  const openReview = (status) => { modal.close(); reviewDialog(ctx, current, item, status); };
+  const content = h("div", {},
+    h("div", { class: "inline-panel emphasis" }, h("h3", {}, item.text), h("p", {}, badge(item.status)),
+      h("p", { class: "muted" }, item.scenario || "未设置场景")),
+    h("dl", { class: "definition-list" },
+      h("div", {}, h("dt", {}, "Canonical intent"), h("dd", {}, item.canonical_intent_id)),
+      h("div", {}, h("dt", {}, "维度"), h("dd", {}, dimensions[item.dimension])),
+      h("div", {}, h("dt", {}, "查询类型"), h("dd", {}, item.query_type === "discovery" ? "发现型" : "导航型")),
+      h("div", {}, h("dt", {}, "优先级"), h("dd", {}, `P${item.priority}`)),
+      h("div", {}, h("dt", {}, "业务适用性"), h("dd", {}, label(item.eligibility)))),
+    canReview ? h("div", { class: "form-actions" },
+      !["reviewed", "frozen"].includes(item.status) ? h("button", { class: "button", onClick: () => openReview("reviewed") }, "审核此题") : null,
+      item.status === "rejected" ? h("button", { class: "button", onClick: () => openReview("draft") }, "恢复为草稿") : null,
+      item.status !== "rejected" ? h("button", { class: "button secondary", onClick: () => openReview("rejected") }, "排除此题") : null) : null);
+  const modal = drawer("题目详情与审核", content);
 }
 
 function newSet(ctx) {

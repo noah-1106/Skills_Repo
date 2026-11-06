@@ -1,5 +1,5 @@
 import { api, setCsrf } from "./api.js";
-import { h, clear, pageHead, field, input, select, toast, formError, label } from "./components.js";
+import { h, clear, pageHead, field, input, select, toast, formError, label, loadingSkeleton, drawer } from "./components.js";
 import { renderOverview } from "./views/overview.js";
 import { renderPrompts } from "./views/prompts.js";
 import { renderEntities } from "./views/entities.js";
@@ -32,21 +32,29 @@ export function navigate(name, params = {}) {
 function renderNav(active) {
   const nav = document.getElementById("main-nav");
   clear(nav);
-  routes.forEach(([name, title]) => nav.append(h("a", { href: `#/${name}`, class: name === active ? "active" : "", "aria-current": name === active ? "page" : null }, title)));
+  routes.forEach(([name, title]) => {
+    if (name === "admin") nav.append(h("div", { class: "nav-group-label" }, "工作区管理"));
+    nav.append(h("a", { href: `#/${name}`, class: name === active ? "active" : "", "aria-current": name === active ? "page" : null }, title));
+  });
 }
 
 function setProtocol(data = {}) {
   const band = document.getElementById("protocol-band");
   clear(band);
-  band.append(h("strong", {}, "当前口径"));
   const items = [
-    ["项目", state.project?.name], ["问题集", data.promptSet], ["实体版本", data.entityVersion ? String(data.entityVersion).slice(0, 10) : ""],
+    ["问题集", data.promptSet], ["实体版本", data.entityVersion ? String(data.entityVersion).slice(0, 10) : ""],
     ["引擎", data.engines], ["模式", data.mode ? label(data.mode) : ""], ["目标", data.target ? label(data.target) : ""],
     ["轮次", data.repeats ? `${data.repeats} 轮` : ""], ["有效样本", data.n !== undefined ? `n=${data.n}` : ""],
     ["数据", data.demo ? "演示数据" : data.real ? "真实 API 数据" : ""],
   ].filter(([, value]) => value);
-  if (items.length <= 1) band.append(h("span", { class: "protocol-empty" }, "选择 wave 后显示冻结口径；不同 wave 不会混合计算"));
-  items.slice(1).forEach(([name, value]) => band.append(h("span", { class: "protocol-item" }, `${name} ${value}`)));
+  if (!items.length) {
+    band.append(h("span", { class: "protocol-empty" }, "当前任务没有选定测量；选择 Wave 后可查看冻结口径。"));
+    return;
+  }
+  band.append(h("strong", {}, "测量上下文"));
+  items.filter(([name]) => ["引擎", "模式", "数据"].includes(name)).forEach(([name, value]) => band.append(h("span", { class: "protocol-item" }, `${name}：${value}`)));
+  band.append(h("details", { class: "protocol-details" }, h("summary", {}, "查看完整冻结口径"),
+    h("dl", {}, items.map(([name, value]) => h("div", {}, h("dt", {}, name), h("dd", {}, value))))));
 }
 
 function cleanup() {
@@ -63,7 +71,7 @@ async function renderRoute() {
   document.title = `${route[1]} · ${state.project.name} · GeoPulse`;
   const renderId = ++state.renderId;
   clear(workspace);
-  workspace.append(h("div", { class: "page-loading", role: "status" }, "正在读取项目数据…"));
+  workspace.append(loadingSkeleton());
   setProtocol();
   try {
     await route[2](workspace, {
@@ -92,11 +100,14 @@ function renderProjectSwitcher() {
     state.role = state.project.member_role;
     renderProjectSwitcher();
     document.getElementById("role-label").textContent = label(state.role);
-    renderRoute();
+    navigate("overview");
   });
   root.append(h("label", {}, "客户项目"), control);
-  if (state.user?.global_role === "admin") root.append(h("button", { class: "text-button", onClick: createProjectDialog }, "新建项目"));
   document.getElementById("role-label").textContent = label(state.role);
+  document.getElementById("account-name").textContent = state.user?.email?.split("@")[0] || "当前账号";
+  document.getElementById("account-email").textContent = state.user?.email || "";
+  document.getElementById("account-scope").textContent = `${state.project?.name || "当前项目"} · ${label(state.role)}`;
+  document.getElementById("new-project-button").hidden = state.user?.global_role !== "admin";
 }
 
 function createProjectDialog() {
@@ -105,7 +116,7 @@ function createProjectDialog() {
   const category = input("", { placeholder: "例如：企业软件" });
   const form = h("form", {}, field("客户名称", client), field("项目名称", name), field("业务品类", category),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "创建项目")));
-  import("./components.js").then(({ drawer }) => {
+  import("./components.js").then(() => {
     const modal = drawer("新建客户项目", form);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -159,8 +170,16 @@ async function startApp() {
   if (!location.hash) navigate("overview"); else await renderRoute();
 }
 
+document.getElementById("new-project-button").addEventListener("click", () => {
+  document.getElementById("account-menu").open = false;
+  createProjectDialog();
+});
 document.getElementById("logout-button").addEventListener("click", async () => {
   try { await api.post("/api/auth/logout", {}); } finally { setCsrf(""); state.user = null; location.hash = ""; renderLogin(); }
+});
+document.addEventListener("click", (event) => {
+  const menu = document.getElementById("account-menu");
+  if (menu.open && !menu.contains(event.target)) menu.open = false;
 });
 const mobileNavigation = window.matchMedia("(max-width: 760px)");
 

@@ -35,7 +35,11 @@ class KimiSearchProvider(OpenAICompatProvider):
             citations.append({"title": str(item.get("title") or ""), "url": url,
                               "text": str(item.get("text") or "")})
         if not citations:
-            raise ProviderError("Kimi 检索结果没有可核验 URL", "search_invalid_results")
+            raise ProviderError("Kimi 检索结果没有可核验 URL", "search_invalid_results",
+                                operations=[{"kind": "search", "status": "failed", "latency_ms": search_latency,
+                                             "usage": {"search_calls": 1}, "request_id": search_request_id,
+                                             "error_type": "search_invalid_results",
+                                             "error_detail": "Kimi 检索结果没有可核验 URL"}])
         context = "\n\n".join(f"[{index}] {item['title']}\nURL: {item['url']}\n摘要: {item['text']}"
                               for index, item in enumerate(citations, 1))
         augmented = (f"用户问题：{prompt}\n\n以下来自 Kimi Search Basic。仅把与问题相关的资料作为依据，"

@@ -26,6 +26,8 @@ class DemoProvider(BaseProvider):
         if protocol.get("demo_variant") == "negative":
             text = f"不建议选择{main}，当前场景与产品能力不匹配；可以考虑{alternate}。"
         time.sleep(0.01)
-        return ProviderResult(text=text, model="geopulse-demo-2",
-                              usage={"prompt_tokens": len(prompt) // 3, "completion_tokens": len(text) // 2},
-                              latency_ms=10, request_id=f"demo-{index}")
+        usage = {"prompt_tokens": len(prompt) // 3, "completion_tokens": len(text) // 2}
+        return ProviderResult(text=text, model="geopulse-demo-2", usage=usage,
+                              latency_ms=10, request_id=f"demo-{index}",
+                              operations=[{"kind": "answer", "status": "succeeded", "model": "geopulse-demo-2",
+                                           "usage": usage, "latency_ms": 10, "request_id": f"demo-{index}"}])

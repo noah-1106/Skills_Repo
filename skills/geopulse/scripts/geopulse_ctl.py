@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import hashlib
 import json
 import os
 import sqlite3
@@ -16,9 +15,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app import config
-from app.db import all_rows, connect, dumps, one
+from app.db import connect, dumps, one
 from app.migrations import SCHEMA_VERSION, backup, initialize, migrate, restore
 from app.security import hash_password
+from app.services.exports import build_project_export
 from app.services.measurement import Worker
 
 
@@ -89,12 +89,8 @@ def main():
             project = one(conn, "SELECT * FROM projects WHERE id=?", (args.project_id,))
             if not project:
                 raise SystemExit("项目不存在")
-            tables = ("brand_entities", "prompt_sets", "prompt_items", "waves", "runs", "answers", "observations",
-                      "citations", "opportunities", "actions", "external_events", "reports", "alerts", "work_logs")
-            payload = {"schema_version": SCHEMA_VERSION, "project": project, "tables": {}, "exported_at": time.time()}
-            for table in tables:
-                payload["tables"][table] = all_rows(conn, f"SELECT * FROM {table} WHERE project_id=?", (args.project_id,))
-        payload["sha256"] = hashlib.sha256(dumps(payload).encode()).hexdigest()
+            payload = build_project_export(conn, project)
+            conn.commit()
         target = args.out or (config.export_dir() / f"geopulse-project-{args.project_id}.json")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(dumps(payload), encoding="utf-8")

@@ -47,7 +47,7 @@ def logical_id(prefix: str) -> str:
 
 def scoped_object(conn, table: str, object_id: int, project: dict) -> dict:
     allowed = {"waves", "runs", "answers", "prompt_sets", "brand_entities", "opportunities",
-               "actions", "reports", "engine_configs", "observations", "schedules"}
+               "actions", "reports", "engine_configs", "observations", "schedules", "alerts"}
     if table not in allowed:
         raise ValueError("unsupported scoped table")
     row = one(conn, f"SELECT * FROM {table} WHERE id=? AND project_id=? AND client_id=?",

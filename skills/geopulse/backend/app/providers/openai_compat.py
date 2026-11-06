@@ -63,6 +63,10 @@ class OpenAICompatProvider(BaseProvider):
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         data, latency, request_id = self._post("/chat/completions", payload)
+        usage = data.get("usage") or {}
+        model = data.get("model") or self.model
+        operation = {"kind": "judge" if json_mode else "answer", "status": "succeeded",
+                     "model": model, "latency_ms": latency, "usage": usage, "request_id": request_id}
         try:
             choice = data["choices"][0]
             message = choice["message"]
@@ -71,12 +75,15 @@ class OpenAICompatProvider(BaseProvider):
                 raise ProviderError("输出被 max_tokens 截断，不作为有效回答", "truncated_answer")
             if not text:
                 raise ProviderError(f"空回答（finish={choice.get('finish_reason')}）", "empty_answer")
-            usage = data.get("usage") or {}
-            model = data.get("model") or self.model
+        except ProviderError as error:
+            operation.update(status="failed", error_type=error.kind, error_detail=str(error))
+            error.operations = [operation]
+            raise
         except (KeyError, IndexError, TypeError) as error:
-            raise ProviderError(f"响应缺少必要字段：{error}", "malformed_response") from error
-        operation = {"kind": "judge" if json_mode else "answer", "status": "succeeded",
-                     "model": model, "latency_ms": latency, "usage": usage, "request_id": request_id}
+            failure = ProviderError(f"响应缺少必要字段：{error}", "malformed_response")
+            operation.update(status="failed", error_type=failure.kind, error_detail=str(failure))
+            failure.operations = [operation]
+            raise failure from error
         return ProviderResult(text=text, model=model, usage=usage, latency_ms=latency,
                               request_id=request_id, operations=[operation])
 

@@ -1,6 +1,7 @@
 """Immutable report preview, approval and export routes."""
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from ..db import all_rows, connect, loads, one
-from ..security import project_context, require_admin
+from ..security import audit, project_context, require_admin
 from ..services import reporting
 from ..services.state import scoped_object
 from .schemas import ReportIn, StatusIn
@@ -52,6 +53,7 @@ def get_report(project_id: int, report_id: int, request: Request):
             snapshot.pop("internal_samples", None)
             for wave in snapshot.get("waves", []):
                 wave["protocol"].pop("system_prompt", None)
+                wave.get("stats", {}).pop("budget", None)
         result["snapshot"] = snapshot
         result["gates"] = reporting.release_gates(loads(report["data_snapshot_json"], {}))
         return result
@@ -98,13 +100,26 @@ def export_report(project_id: int, report_id: int, request: Request, variant: st
         report = scoped_object(conn, "reports", report_id, context["project"])
     if variant == "client" and format == "pdf" and report["approval_status"] not in ("client_approved", "sent"):
         raise HTTPException(409, "客户版 PDF 必须完成管理员客户审批后导出")
-    snapshot = loads(report["data_snapshot_json"], {})
-    snapshot["approval_status"] = report["approval_status"]
-    client_html, internal_html = reporting.render_reports(snapshot)
-    html = internal_html if variant == "internal" else client_html
+    html = report["internal_html"] if variant == "internal" else report["client_html"]
+    html_checksum = report[f"{variant}_html_sha256"] or hashlib.sha256(html.encode()).hexdigest()
     if format == "pdf":
         content = _pdf(html)
-        return Response(content, media_type="application/pdf",
-                        headers={"Content-Disposition": f'attachment; filename="geopulse-report-{report_id}-v{report["version"]}.pdf"'})
-    return HTMLResponse(html, headers={"Content-Disposition": f'inline; filename="geopulse-report-{report_id}.html"',
-                                      "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:"})
+        checksum = hashlib.sha256(content).hexdigest()
+        media_type = "application/pdf"
+        disposition = f'attachment; filename="geopulse-report-{report_id}-v{report["version"]}.pdf"'
+    else:
+        content = html
+        checksum = html_checksum
+        media_type = "text/html"
+        disposition = f'inline; filename="geopulse-report-{report_id}.html"'
+    with connect() as conn:
+        audit(conn, context["user"]["id"], context["project"], "report", report_id, "export", None,
+              {"variant": variant, "format": format, "sha256": checksum,
+               "data_snapshot_hash": report["data_snapshot_hash"]})
+        conn.commit()
+    headers = {"Content-Disposition": disposition, "X-Content-SHA256": checksum,
+               "X-Data-Snapshot-SHA256": report["data_snapshot_hash"]}
+    if format == "html":
+        headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+        return HTMLResponse(content, headers=headers)
+    return Response(content, media_type=media_type, headers=headers)

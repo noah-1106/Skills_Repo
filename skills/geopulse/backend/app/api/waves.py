@@ -3,24 +3,45 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from ..db import all_rows, connect, dumps, loads, one, utc_now
+from ..db import all_rows, connect, dumps, loads, one, transaction, utc_now
 from ..engine.compare import compare_metrics
 from ..engine.metrics import calculate_metrics
 from ..security import audit, project_context, require_admin
+from ..services.budgets import authorize_budget, reserve, scale_estimate
 from ..services.measurement import (create_run, create_wave, engine_public, estimate_wave, load_run_samples,
                                     run_progress, _finalize_run)
 from ..services.reporting import wave_metrics
 from ..services.state import scoped_object, transition
-from .schemas import ObservationRevisionIn, StatusIn, WaveIn
+from .schemas import ObservationRevisionIn, RunCreateIn, StatusIn, WaveIn
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["waves"])
 
 
-def wave_public(conn, wave: dict) -> dict:
+def _public_snapshot(value):
+    if isinstance(value, dict):
+        return {key: _public_snapshot(item) for key, item in value.items()
+                if key not in ("secret_ref", "cost_rule", "cost_rule_json")}
+    if isinstance(value, list):
+        return [_public_snapshot(item) for item in value]
+    return value
+
+
+def run_public(run: dict) -> dict:
+    result = dict(run)
+    result["snapshot"] = _public_snapshot(loads(result.pop("snapshot_json"), {}))
+    return result
+
+
+def wave_public(conn, wave: dict, role: str = "admin") -> dict:
     result = dict(wave)
+    result.pop("engine_snapshot_json", None)
     result["protocol"] = loads(result.pop("protocol_json"), {})
     result["stats"] = loads(result.pop("stats_json"), {})
     result["estimate"] = estimate_wave(conn, wave)
+    if role in ("reviewer", "viewer"):
+        for key in ("estimated_cost", "max_estimated_cost", "known_cost", "currency", "unknown_components", "by_engine"):
+            result["estimate"].pop(key, None)
+        result["stats"].pop("budget", None)
     result["runs"] = all_rows(conn, "SELECT id,attempt_no,status,started_at,finished_at,error FROM runs WHERE wave_id=? ORDER BY attempt_no DESC", (wave["id"],))
     return result
 
@@ -29,7 +50,7 @@ def wave_public(conn, wave: dict) -> dict:
 def list_waves(project_id: int, request: Request):
     context = project_context(request, project_id)
     with connect() as conn:
-        return {"items": [wave_public(conn, row) for row in all_rows(conn, "SELECT * FROM waves WHERE project_id=? ORDER BY id DESC", (project_id,))]}
+        return {"items": [wave_public(conn, row, context["role"]) for row in all_rows(conn, "SELECT * FROM waves WHERE project_id=? ORDER BY id DESC", (project_id,))]}
 
 
 @router.post("/waves")
@@ -37,23 +58,26 @@ def new_wave(project_id: int, payload: WaveIn, request: Request):
     context = project_context(request, project_id, "analyst")
     wave = create_wave(context["project"], context["user"]["id"], payload.model_dump())
     with connect() as conn:
-        return wave_public(conn, wave)
+        return wave_public(conn, wave, context["role"])
 
 
 @router.get("/waves/{wave_id}")
 def get_wave(project_id: int, wave_id: int, request: Request):
     context = project_context(request, project_id)
     with connect() as conn:
-        return wave_public(conn, scoped_object(conn, "waves", wave_id, context["project"]))
+        return wave_public(conn, scoped_object(conn, "waves", wave_id, context["project"]), context["role"])
 
 
 @router.post("/waves/{wave_id}/runs")
-def new_run(project_id: int, wave_id: int, request: Request):
+def new_run(project_id: int, wave_id: int, request: Request, payload: RunCreateIn | None = None):
     context = project_context(request, project_id, "analyst")
+    reason = payload.budget_confirmation_reason if payload else ""
+    if reason:
+        context = require_admin(request, project_id)
     with connect() as conn:
         wave = scoped_object(conn, "waves", wave_id, context["project"])
-    run = create_run(context["project"], wave, context["user"]["id"])
-    return {"run": run, "progress": {"total": 0, "finished": 0, "progress": 0}}
+    run = create_run(context["project"], wave, context["user"]["id"], confirmation_reason=reason)
+    return {"run": run_public(run), "progress": {"total": 0, "finished": 0, "progress": 0}}
 
 
 @router.post("/waves/{wave_id}/official")
@@ -91,8 +115,7 @@ def get_run(project_id: int, run_id: int, request: Request):
     context = project_context(request, project_id)
     with connect() as conn:
         run = scoped_object(conn, "runs", run_id, context["project"])
-        result = dict(run)
-        result["snapshot"] = loads(result.pop("snapshot_json"), {})
+        result = run_public(run)
         result["progress"] = run_progress(conn, run_id)
         return result
 
@@ -105,7 +128,7 @@ def cancel_run(project_id: int, run_id: int, request: Request):
         if run["status"] in ("done", "failed", "cancelled"):
             raise HTTPException(409, "该 run 已结束")
         conn.execute("UPDATE runs SET cancel_requested=1 WHERE id=?", (run_id,))
-        conn.execute("UPDATE answers SET status='cancelled',completed_at=? WHERE run_id=? AND status='queued'", (utc_now(), run_id))
+        conn.execute("UPDATE answers SET status='cancelled',valid_sample=0,completed_at=? WHERE run_id=? AND status='queued'", (utc_now(), run_id))
         remaining = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('running','judging')", (run_id,))["count"]
         if not remaining:
             _finalize_run(conn, run_id)
@@ -115,18 +138,28 @@ def cancel_run(project_id: int, run_id: int, request: Request):
 
 
 @router.post("/runs/{run_id}/retry")
-def retry_run(project_id: int, run_id: int, request: Request):
+def retry_run(project_id: int, run_id: int, request: Request, payload: RunCreateIn | None = None):
     context = require_admin(request, project_id)
-    with connect() as conn:
+    reason = payload.budget_confirmation_reason if payload else ""
+    with transaction() as conn:
         run = scoped_object(conn, "runs", run_id, context["project"])
+        if run["status"] in ("queued", "running"):
+            raise HTTPException(409, "运行中的 Run 不能重复派发重试")
+        wave = scoped_object(conn, "waves", run["wave_id"], context["project"])
         count = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))["count"]
         if not count:
             raise HTTPException(409, "没有可重试的失败样本")
-        conn.execute("UPDATE answers SET status='queued',error_type=NULL,error_detail=NULL WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))
+        total = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=?", (run_id,))["count"]
+        estimate = scale_estimate(estimate_wave(conn, wave), count / total)
+        decision = authorize_budget(conn, context["project"], estimate, wave=wave,
+                                    actor=context["user"]["id"], confirmation_reason=reason,
+                                    exclude_run_id=run_id)
+        conn.execute("UPDATE answers SET status='queued',valid_sample=NULL,error_type=NULL,error_detail=NULL WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))
         conn.execute("UPDATE runs SET status='queued',cancel_requested=0,finished_at=NULL WHERE id=?", (run_id,))
         conn.execute("UPDATE waves SET status='running' WHERE id=?", (run["wave_id"],))
-        audit(conn, context["user"]["id"], context["project"], "run", run_id, "manual_retry", None, {"samples": count})
-        conn.commit()
+        reserve(conn, context["project"], decision, wave=wave, run_id=run_id, actor=context["user"]["id"])
+        audit(conn, context["user"]["id"], context["project"], "run", run_id, "manual_retry", None,
+              {"samples": count, "budget_override_reason": decision.get("override_reason") or ""})
     return {"queued": count, "note": "超时等结果不明的调用已由管理员确认重试"}
 
 
@@ -148,13 +181,18 @@ def answers(project_id: int, run_id: int, request: Request, status: str = "", re
             limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0)):
     context = project_context(request, project_id)
     with connect() as conn:
-        scoped_object(conn, "runs", run_id, context["project"])
+        run = scoped_object(conn, "runs", run_id, context["project"])
+        snapshot = loads(run["snapshot_json"], {})
+        engines = {int(engine["id"]): engine for engine in snapshot.get("engines", [])}
         clauses, args = ["a.run_id=?"], [run_id]
         if status:
             clauses.append("a.status=?")
             args.append(status)
-        rows = all_rows(conn, "SELECT a.id,a.run_id,a.prompt_item_id,a.engine_config_id,a.round_no,a.status,a.error_type,a.error_detail,a.model,a.created_at,a.completed_at,substr(a.raw_text,1,600) AS raw_text,p.text AS prompt_text,p.dimension,e.name AS engine_name,e.mode AS engine_mode FROM answers a JOIN prompt_items p ON p.id=a.prompt_item_id JOIN engine_configs e ON e.id=a.engine_config_id WHERE " + " AND ".join(clauses) + " ORDER BY a.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+        rows = all_rows(conn, "SELECT a.id,a.run_id,a.prompt_item_id,a.engine_config_id,a.round_no,a.status,a.error_type,a.error_detail,a.model,a.created_at,a.completed_at,a.content_retained,a.content_purged_at,substr(a.raw_text,1,600) AS raw_text,p.text AS prompt_text,p.dimension FROM answers a JOIN prompt_items p ON p.id=a.prompt_item_id WHERE " + " AND ".join(clauses) + " ORDER BY a.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
         for row in rows:
+            engine = engines.get(int(row["engine_config_id"]), {})
+            row["engine_name"] = engine.get("name") or str(row["engine_config_id"])
+            row["engine_mode"] = engine.get("mode") or snapshot.get("protocol", {}).get("mode")
             if context["role"] in ("reviewer", "viewer"):
                 row["raw_text"] = None
                 row["error_detail"] = None
@@ -179,8 +217,14 @@ def answer_detail(project_id: int, answer_id: int, request: Request):
     context = project_context(request, project_id)
     with connect() as conn:
         answer = scoped_object(conn, "answers", answer_id, context["project"])
-        metadata = one(conn, "SELECT p.text AS prompt_text,e.name AS engine_name,e.mode AS engine_mode FROM prompt_items p,engine_configs e WHERE p.id=? AND e.id=?", (answer["prompt_item_id"], answer["engine_config_id"]))
-        answer.update(metadata or {})
+        run = one(conn, "SELECT snapshot_json FROM runs WHERE id=?", (answer["run_id"],))
+        snapshot = loads(run["snapshot_json"], {}) if run else {}
+        prompt = one(conn, "SELECT text AS prompt_text FROM prompt_items WHERE id=?", (answer["prompt_item_id"],))
+        engine = next((item for item in snapshot.get("engines", [])
+                       if int(item["id"]) == int(answer["engine_config_id"])), {})
+        answer.update(prompt or {})
+        answer["engine_name"] = engine.get("name") or str(answer["engine_config_id"])
+        answer["engine_mode"] = engine.get("mode") or snapshot.get("protocol", {}).get("mode")
         answer["usage"] = loads(answer.pop("usage_json"), {})
         if context["role"] in ("reviewer", "viewer"):
             answer["raw_text"] = None
@@ -193,7 +237,7 @@ def answer_detail(project_id: int, answer_id: int, request: Request):
             observation["entity_card"] = loads(observation.pop("entity_card_json"), {})
         answer["observations"] = observations
         answer["citations"] = all_rows(conn, "SELECT * FROM citations WHERE answer_id=?", (answer_id,))
-        attempts = all_rows(conn, "SELECT id,kind,attempt_no,status,request_id,model,latency_ms,usage_json,cost,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
+        attempts = all_rows(conn, "SELECT id,kind,operation,attempt_no,status,request_id,model,latency_ms,usage_json,cost,currency,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
         for attempt in attempts:
             attempt["usage"] = loads(attempt.pop("usage_json"), {})
             if context["role"] in ("reviewer", "viewer"):
@@ -213,6 +257,8 @@ def revise_observation(project_id: int, answer_id: int, observation_id: int,
         original = scoped_object(conn, "observations", observation_id, context["project"])
         if original["answer_id"] != answer_id:
             raise HTTPException(409, "判定不属于该回答")
+        if not answer.get("content_retained", 1):
+            raise HTTPException(409, "原文已按保留策略清理，不能新增依赖原文的复核 revision")
         if payload.mentioned and payload.entity_status == "confirmed" and (not payload.evidence or payload.evidence not in (answer["raw_text"] or "")):
             raise HTTPException(400, "有效提及的证据必须逐字来自原文")
         if payload.sentiment == "negative" and payload.depth == "recommended":

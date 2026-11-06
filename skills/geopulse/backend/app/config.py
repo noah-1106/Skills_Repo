@@ -27,7 +27,8 @@ DEFAULT_PROJECT_SETTINGS = {
         "zhihu.com": "UGC",
         "xiaohongshu.com": "UGC",
     },
-    "budget": {"enabled": False, "hard_limit": False, "amount": None, "currency": "CNY"},
+    "budget": {"enabled": False, "hard_limit": False, "amount": None, "wave_amount": None,
+               "daily_amount": None, "currency": "CNY"},
     "retention_days": None,
 }
 
