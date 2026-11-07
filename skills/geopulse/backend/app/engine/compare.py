@@ -1,15 +1,19 @@
 """Strict, paired wave comparison without causal overclaiming."""
 from __future__ import annotations
 
+from ..services.execution import canonical_protocol
+
 REQUIRED_PROTOCOL = (
     "prompt_set_hash", "entity_version", "competitor_pool_hash", "engine_signature", "repeats",
-    "temperature", "system_prompt", "max_tokens", "language", "market", "judge_version",
+    "answer_execution", "judge_execution", "judge_mode", "language", "market", "judge_version",
     "mode", "measurement_target", "valid_sample_definition", "stratum_weights",
-    "use_judge", "collection_protocol", "judge_signature", "judge_execution",
+    "use_judge", "collection_protocol", "judge_signature",
 )
 
 
 def protocol_check(baseline: dict, current: dict) -> dict:
+    baseline = canonical_protocol(baseline)
+    current = canonical_protocol(current)
     mismatches = [key for key in REQUIRED_PROTOCOL if baseline.get(key) != current.get(key)]
     exploratory = baseline.get("reported_model_versions") != current.get("reported_model_versions")
     return {"comparable": not mismatches, "mismatches": mismatches,

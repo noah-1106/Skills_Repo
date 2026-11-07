@@ -57,7 +57,7 @@ def list_waves(project_id: int, request: Request):
 @router.post("/waves")
 def new_wave(project_id: int, payload: WaveIn, request: Request):
     context = project_context(request, project_id, "analyst")
-    wave = create_wave(context["project"], context["user"]["id"], payload.model_dump())
+    wave = create_wave(context["project"], context["user"]["id"], payload.model_dump(exclude_unset=True))
     with connect() as conn:
         return wave_public(conn, wave, context["role"])
 
@@ -249,9 +249,11 @@ def answer_detail(project_id: int, answer_id: int, request: Request):
             observation["entity_card"] = loads(observation.pop("entity_card_json"), {})
         answer["observations"] = observations
         answer["citations"] = all_rows(conn, "SELECT * FROM citations WHERE answer_id=?", (answer_id,))
-        attempts = all_rows(conn, "SELECT id,kind,operation,attempt_no,status,engine_config_id,request_id,model,latency_ms,usage_json,cost,currency,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
+        attempts = all_rows(conn, "SELECT id,kind,operation,attempt_no,status,engine_config_id,request_id,model,latency_ms,usage_json,request_params_json,response_meta_json,cost,currency,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
         for attempt in attempts:
             attempt["usage"] = loads(attempt.pop("usage_json"), {})
+            attempt["request_params"] = loads(attempt.pop("request_params_json"), {})
+            attempt["response_meta"] = loads(attempt.pop("response_meta_json"), {})
             if context["role"] in ("reviewer", "viewer"):
                 attempt.pop("cost", None)
                 attempt["error_detail"] = None

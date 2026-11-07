@@ -82,8 +82,8 @@ function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
   root.append(h("div", { class: "evidence-layout" }, rawPanel, observations));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "调用、模型与 Judge 元数据"), h("div", {},
     h("p", { class: "muted" }, `返回模型：${answer.model || "—"}。usage：${JSON.stringify(answer.usage || {})}`),
-    answer.call_attempts.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["类型", "状态", "模型", "延迟", "Usage", ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : ["成本"])].map((title) => h("th", {}, title)))),
-      h("tbody", {}, answer.call_attempts.map((attempt) => h("tr", {}, [attempt.kind, label(attempt.status), attempt.model || "—", `${attempt.latency_ms || 0} ms`, JSON.stringify(attempt.usage || {}), ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : [attempt.cost ?? "未知"])].map((value) => h("td", {}, value))))))) : h("p", {}, "暂无调用记录"))));
+    answer.call_attempts.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["类型", "状态", "模型", "延迟", "Usage", "实际请求参数", "响应元数据", ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : ["成本"])].map((title) => h("th", {}, title)))),
+      h("tbody", {}, answer.call_attempts.map((attempt) => h("tr", {}, [attempt.kind, label(attempt.status), attempt.model || "—", `${attempt.latency_ms || 0} ms`, JSON.stringify(attempt.usage || {}), JSON.stringify(attempt.request_params || {}), JSON.stringify(attempt.response_meta || {}), ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : [attempt.cost ?? "未知"])].map((value) => h("td", {}, value))))))) : h("p", {}, "暂无调用记录"))));
 }
 
 function evidenceList(ctx, collection, onDelete = null) {

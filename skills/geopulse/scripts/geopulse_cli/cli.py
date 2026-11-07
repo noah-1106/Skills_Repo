@@ -80,7 +80,9 @@ def build_parser():
         leaf.set_defaults(operation=item)
         add_operation_arguments(leaf, item)
     for command, description in (("capabilities", "查看服务、身份和命令能力"),
-                                 ("measure run", "创建 Wave，确认后创建 Run，可选等待与指标")):
+                                 ("measure run", "创建 Wave，确认后创建 Run，可选等待与指标"),
+                                 ("schema", "从服务 OpenAPI 查看请求 schema"),
+                                 ("example", "生成不含秘密的可填写请求示例")):
         parts = tuple(command.split())
         for depth in range(1, len(parts)):
             prefix = parts[:depth]
@@ -96,6 +98,10 @@ def build_parser():
             leaf.add_argument("--wait", action="store_true")
             leaf.add_argument("--interval", type=float, default=2)
             leaf.add_argument("--wait-timeout", type=float, default=600)
+        if command == "schema":
+            leaf.add_argument("model", choices=("engine", "wave", "collection-draft"))
+        if command == "example":
+            leaf.add_argument("model", choices=("engine", "wave", "manual-web-wave", "collection-draft"))
     return parser
 
 
@@ -405,6 +411,9 @@ def execute(client, args, item):
             write_json_atomic(args.out, result, args.overwrite)
             return {"backup_manifest": result, "manifest_path": str(args.out), "delivery": "server_side", "note": note}
         return {"backup_manifest": result, "delivery": "server_side", "note": note}
+    if item.command == ("collection", "submit"):
+        return {**result, "worker_required": True,
+                "next_step": "回答已进入 judging；启动 run-worker 完成 Judge 和 Run，再用 run wait 查询。"}
     return result
 
 
@@ -466,6 +475,81 @@ def auth_command(client, args, item):
     return None
 
 
+def schema_command(client, args):
+    document = client.request("GET", "/openapi.json").json()
+    model = {"engine": "EngineIn", "wave": "WaveIn", "collection-draft": "CollectionDraftIn"}[args.model]
+    definitions = (document.get("components") or {}).get("schemas") or {}
+    if model not in definitions:
+        raise CliError(f"服务 OpenAPI 未提供 {model}", code="schema_unavailable", exit_code=5)
+
+    def resolve(value):
+        if isinstance(value, list):
+            return [resolve(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        if "$ref" in value:
+            name = value["$ref"].removeprefix("#/components/schemas/")
+            if name not in definitions:
+                raise CliError(f"OpenAPI 引用无法解析：{value['$ref']}", code="schema_unavailable", exit_code=5)
+            return resolve(definitions[name])
+        return {key: resolve(item) for key, item in value.items()}
+
+    return {"model": model, "source": "/openapi.json", "schema": resolve(definitions[model])}
+
+
+def example_command(args):
+    protocol = {
+        "product_url": "https://consumer.example.com/chat", "platform": "example-product",
+        "surface": "desktop_web", "page_mode": "default", "networking": False,
+        "deep_thinking": False, "deep_research": False, "session_mode": "new",
+        "login_state": "anonymous", "account_type": "", "region": "CN", "language": "zh-CN",
+        "context_clearing": "new_session", "follow_up_policy": "none", "protocol_version": "manual-web-v1",
+    }
+    examples = {
+        "engine": {
+            "name": "DeepSeek Search", "vendor": "DeepSeek", "kind": "deepseek_search",
+            "model": "按账号可用模型填写", "base_url": "https://api.deepseek.com/v1", "mode": "search",
+            "measurement_target": "provider_api", "cost_rule": {"currency": "CNY"},
+            "capabilities": {"supports_json_mode": None, "max_output_tokens": None},
+            "answer_defaults": {"temperature": 0.2, "max_tokens": 700},
+            "judge_defaults": {"temperature": 0, "max_tokens": 1800},
+            "health_defaults": {"max_tokens": 8},
+        },
+        "wave": {
+            "prompt_set_id": 1, "label": "Provider 独立 Judge 测量", "engine_ids": [1], "repeats": 1,
+            "use_judge": True, "judge_engine_id": 2,
+            "answer_overrides": {"1": {"temperature": 0.2, "max_tokens": 700}},
+            "judge_overrides": {"temperature": 0, "max_tokens": 1800},
+        },
+        "manual-web-wave": {
+            "prompt_set_id": 1, "label": "人工 Consumer Web 测量", "engine_ids": [1],
+            "judge_engine_id": 2, "repeats": 1, "use_judge": True, "collection_protocol": protocol,
+        },
+        "collection-draft": {
+            "draft_text": "粘贴实际页面中的完整回答", "actual_url": protocol["product_url"],
+            "observed_mode": "default", "observed_at": "2026-11-07T10:00:00+08:00",
+            "timezone": "Asia/Shanghai", "retrieval_status": "off", "notes": "不要填写账号、Cookie 或 Token",
+            "session_context": {key: value for key, value in protocol.items()
+                                if key not in ("product_url", "platform", "protocol_version")},
+            "citations": [{"url": "https://example.com/source", "title": "实际看到的来源", "text": "实际看到的卡片文本"}],
+            "status": "review_pending",
+        },
+    }
+    commands = {
+        "engine": "geopulse engine create --project <ID> --spec engine.json --secret-fd <FD>",
+        "wave": "geopulse wave create --project <ID> --spec wave.json",
+        "manual-web-wave": "geopulse wave create --project <ID> --spec manual-web-wave.json",
+        "collection-draft": "geopulse collection save --project <ID> --answer <ID> --spec collection-draft.json",
+    }
+    notes = ["示例中的 ID、模型、入口和观察事实必须替换为实际值；示例不包含 API Key。"]
+    if args.model == "collection-draft":
+        notes.append("正式 collection submit --confirm 后 answer 进入 judging；必须启动 run-worker 才会完成 Judge 和 Run。")
+    if args.model == "manual-web-wave":
+        notes.append("创建 Run 后只产生人工采集任务；系统不会自动操作网页或保存登录会话。")
+        notes.append("collection submit --confirm 后必须启动 run-worker，完整测量才会从 judging 继续。")
+    return {"spec": examples[args.model], "usage": commands[args.model], "notes": notes}
+
+
 def capabilities(args):
     client = Client.authenticated(args, required=False)
     health = client.request("GET", "/api/health").json()
@@ -480,7 +564,9 @@ def capabilities(args):
     commands = [{"command": " ".join(item.command), "method": item.method, "path": item.path,
                  "query": list(item.query), "confirmation": item.confirmation or None,
                  "download": item.download or None} for item in OPERATIONS]
-    commands += [{"command": "capabilities", "custom": True}, {"command": "measure run", "custom": True}]
+    commands += [{"command": "capabilities", "custom": True}, {"command": "measure run", "custom": True},
+                 {"command": "schema engine|wave|collection-draft", "custom": True},
+                 {"command": "example engine|wave|manual-web-wave|collection-draft", "custom": True}]
     return {"cli_contract": CLI_CONTRACT, "health": health, **identity, "commands": commands,
             "live_provider_verified": False,
             "note": "命令覆盖不代表真实 Provider、Consumer Web 或授权 Collector 已完成 live 验收。"}
@@ -509,6 +595,11 @@ def main(argv=None):
         apply_defaults(args)
         if getattr(args, "custom", None) == "capabilities":
             result = capabilities(args)
+        elif getattr(args, "custom", None) == "example":
+            result = example_command(args)
+        elif getattr(args, "custom", None) == "schema":
+            client = Client.authenticated(args, required=False)
+            result = schema_command(client, args)
         else:
             item = getattr(args, "operation", None)
             required = item not in (REGISTRY[("auth", "login")], REGISTRY[("health",)])

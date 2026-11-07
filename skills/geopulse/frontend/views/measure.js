@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { executionFields } from "../execution.js";
 import { h, clear, pageHead, section, dataTable, badge, metric, drawer, field, input, select, checkbox, toast, formError, confirmDialog, formatDate, label, emptyState, handleBudgetError, pct } from "../components.js";
 
 const openRunHistories = new Set();
@@ -7,6 +8,22 @@ const requiresRealConfirmation = (wave) => [
   ...(wave.protocol.engine_signature || []),
   ...(wave.protocol.judge_signature ? [wave.protocol.judge_signature] : []),
 ].some((engine) => !["demo", "manual_web"].includes(engine.kind));
+
+function executionText(execution) {
+  if (!execution) return "—";
+  const value = (key) => execution[key] === null ? "不发送" : execution[key] ?? "继承";
+  return `temperature=${value("temperature")} · max_tokens=${value("max_tokens")} · system=${execution.system_prompt === null ? "不发送" : execution.system_prompt === "" ? "空 system" : "已冻结"}`;
+}
+
+function frozenExecution(protocol) {
+  return h("details", { class: "advanced" }, h("summary", {}, "查看冻结执行参数"), h("div", {},
+    h("p", { class: "muted small" }, `Judge 方式：${protocol.judge_mode === "independent" ? `独立 Judge · ${protocol.judge_signature?.name || "未配置"}` : protocol.judge_mode === "disabled" ? "已关闭" : "各回答引擎兼任 Judge"}。这里只展示非秘密参数摘要。`),
+    dataTable(["回答引擎", "回答请求", "Judge 请求"], (protocol.engine_signature || []).map((engine) => [
+      engine.name,
+      protocol.measurement_target === "consumer_web" ? "人工页面回答" : executionText(protocol.answer_execution?.[engine.id]),
+      executionText(protocol.judge_execution?.[engine.id]),
+    ]))));
+}
 
 export async function renderMeasure(root, ctx) {
   const [waveData, setData, engineData] = await Promise.all([
@@ -53,10 +70,11 @@ export async function renderMeasure(root, ctx) {
     manual ? h("details", { class: "advanced" }, h("summary", {}, "查看冻结采集协议"), h("div", {},
       h("p", {}, protocol.collection_protocol.product_url),
       h("p", { class: "muted small" }, `${label(protocol.collection_protocol.surface)} · ${protocol.collection_protocol.page_mode || "默认模式"} · ${protocol.collection_protocol.session_mode === "new" ? "新会话" : "连续会话"} · ${protocol.collection_protocol.language}`),
-      h("p", { class: "muted small" }, `独立 Judge：${protocol.judge_signature?.name || "未启用"}。联网、深度开关、登录状态、上下文清理和追问策略均已冻结；实际提交必须逐项一致。`))) : null));
+      h("p", { class: "muted small" }, `独立 Judge：${protocol.judge_signature?.name || "未启用"}。联网、深度开关、登录状态、上下文清理和追问策略均已冻结；实际提交必须逐项一致。`))) : null,
+    frozenExecution(protocol)));
   if (run) {
     const progress = run.progress;
-    detail.append(h("section", { class: "inline-panel run-focus" }, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, `Run #${run.id} · 第 ${run.attempt_no} 次尝试`), h("p", { dataset: { runStatus: "" } }, `${label(run.status)} · ${manual ? run.snapshot.protocol.use_judge ? `独立 Judge：${protocol.judge_signature?.name || "未配置"}` : "规则回退，需人工仲裁" : run.snapshot.protocol.use_judge ? "全量结构化 judge" : "规则回退"}${metrics.is_demo ? " · 演示数据" : ""}`)),
+    detail.append(h("section", { class: "inline-panel run-focus" }, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, `Run #${run.id} · 第 ${run.attempt_no} 次尝试`), h("p", { dataset: { runStatus: "" } }, `${label(run.status)} · ${manual ? run.snapshot.protocol.use_judge ? `独立 Judge：${protocol.judge_signature?.name || "未配置"}` : "规则回退，需人工仲裁" : run.snapshot.protocol.use_judge ? protocol.judge_mode === "independent" ? `独立 Judge：${protocol.judge_signature?.name || "未配置"}` : "各回答引擎兼任结构化 Judge" : "规则回退"}${metrics.is_demo ? " · 演示数据" : ""}`)),
       h("div", { class: "button-group" },
         active && ["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button danger small-button", onClick: () => cancelRun(ctx, wave, run) }, "取消 Run") : null,
         ["failed", "cancelled", "partial"].includes(run.status) && ctx.role === "admin" ? h("button", { class: "button secondary small-button", onClick: () => retryRun(ctx, run) }, "确认重试失败样本") : null,
@@ -125,12 +143,16 @@ function waveWizard(ctx, sets, engines) {
   const labelInput = input(`GEO 测量 ${new Date().toISOString().slice(0, 10)}`, { required: true });
   const setInput = select(frozen.map((item) => ({ value: item.id, label: `v${item.version} · ${item.name}` })));
   const repeats = select([1, 2, 3, 4, 5].map((value) => ({ value, label: `${value} 轮${value === 3 ? "（默认）" : ""}` })), 3);
-  const maxTokens = input("700", { type: "number", min: 100, max: 8000 });
-  const maxTokensField = field("最大输出 tokens", maxTokens);
+  const answerParams = executionFields({}, "answer", "回答参数（可选，默认继承引擎配置）");
+  const judgeParams = executionFields({}, "judge", "Judge 参数（可选，默认继承 Judge 引擎配置）");
   const judge = checkbox("生产回答使用全量结构化 judge", true, "演示引擎始终使用明确标记的 demo-rules；生产 judge 失败会显式降级并进入复核");
   const judgeEngines = enabled.filter((engine) => engine.kind !== "manual_web");
+  const judgeMode = select([{ value: "answer_engine", label: "各回答引擎兼任 Judge" }, { value: "independent", label: "指定独立 Judge" }], "answer_engine");
+  const judgeModeField = field("Judge 方式", judgeMode, "同引擎保留兼容口径；独立 Judge 分开发送判定请求并记录成本");
   const judgeEngine = select(judgeEngines.map((engine) => ({ value: engine.id, label: `${engine.name} · ${engine.kind} · ${engine.model || "未标模型"}` })), judgeEngines[0]?.id);
-  const judgeEngineField = field("独立 Judge 引擎", judgeEngine, "只用于判定人工原文；不是被观察的消费者产品");
+  const judgeEngineField = field("独立 Judge 引擎", judgeEngine, "只用于结构化判定；Search 型 Judge 也只调用 Chat，不执行 Search");
+  const answerOverridePanel = h("div", {});
+  const answerOverrides = new Map();
   const productUrl = input("", { readonly: true });
   const platform = input("", { required: true, placeholder: "产品或平台名称，不填写账号别名" });
   const surface = select([{ value: "desktop_web", label: "桌面 Web" }, { value: "mobile_web", label: "移动 Web" }], "desktop_web");
@@ -164,12 +186,31 @@ function waveWizard(ctx, sets, engines) {
     return control;
   });
   const syncEngines = () => {
-    const manualTarget = engineChecks.find((item) => item.control.checked && item.engine.kind === "manual_web")?.engine;
+    const selected = engineChecks.filter((item) => item.control.checked).map((item) => item.engine);
+    const manualTarget = selected.find((engine) => engine.kind === "manual_web");
+    const providerIds = new Set(selected.filter((engine) => engine.kind !== "manual_web").map((engine) => Number(engine.id)));
     collectionPanel.hidden = !manualTarget;
     collectionPanel.querySelectorAll("input,select,textarea").forEach((control) => { control.disabled = !manualTarget; });
-    judgeEngineField.hidden = !manualTarget || !judge.control.checked;
+    answerParams.node.hidden = Boolean(manualTarget);
+    answerOverridePanel.hidden = Boolean(manualTarget);
+    clear(answerOverridePanel);
+    if (!manualTarget && selected.length) {
+      answerOverridePanel.append(h("h3", {}, "按回答引擎覆盖（可选）"), h("p", { class: "muted small" }, "未展开的引擎继承上方回答参数与各自引擎默认值。"));
+      selected.forEach((engine) => {
+        if (!answerOverrides.has(engine.id)) answerOverrides.set(engine.id, executionFields({}, "answer", `${engine.name} · 回答覆盖`));
+        answerOverridePanel.append(answerOverrides.get(engine.id).node);
+      });
+    }
+    judgeMode.disabled = Boolean(manualTarget);
+    if (manualTarget) judgeMode.value = "independent";
+    const independent = judgeMode.value === "independent";
+    judgeModeField.hidden = Boolean(manualTarget) || !judge.control.checked;
+    judgeEngineField.hidden = !judge.control.checked || !independent;
+    judgeParams.node.hidden = !judge.control.checked;
     judge.node.querySelector("label").childNodes[0].textContent = manualTarget ? "使用独立 Judge 判定人工回答" : "生产回答使用全量结构化 judge";
-    maxTokensField.querySelector("label").textContent = manualTarget ? "Judge 最大输出 tokens" : "最大输出 tokens";
+    judgeEngineField.querySelector("label").textContent = manualTarget ? "独立 Judge 引擎" : "独立 Judge 引擎（不能同时是回答引擎）";
+    [...judgeEngine.options].forEach((option) => { option.disabled = !manualTarget && providerIds.has(Number(option.value)); });
+    if (judgeEngine.selectedOptions[0]?.disabled) judgeEngine.value = [...judgeEngine.options].find((option) => !option.disabled)?.value || "";
     if (manualTarget) {
       productUrl.value = manualTarget.base_url;
       platform.value = platform.value || manualTarget.vendor || manualTarget.name;
@@ -178,9 +219,11 @@ function waveWizard(ctx, sets, engines) {
     } else networking.control.disabled = false;
   };
   judge.control.addEventListener("change", syncEngines);
+  judgeMode.addEventListener("change", syncEngines);
   const form = h("form", {}, field("Wave 名称", labelInput), field("冻结问题集", setInput),
     h("fieldset", {}, h("legend", { class: "field-label" }, "选择一个 Provider 组合或一个人工 Web 目标"), engineChecks.map((item) => item.node)),
-    collectionPanel, h("div", { class: "form-grid" }, field("采样轮次", repeats), maxTokensField), judge.node, judgeEngineField,
+    collectionPanel, h("div", { class: "form-grid" }, field("采样轮次", repeats)), answerParams.node, answerOverridePanel,
+    judge.node, judgeModeField, judgeEngineField, judgeParams.node,
     h("p", { class: "muted small" }, "创建 wave 不会调用外部服务。统计阈值沿用项目设置，创建后冻结，不能在看到结果后放宽。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "创建方案并查看预估")));
   const modal = drawer("新建测量方案", form, { wide: true });
@@ -192,12 +235,18 @@ function waveWizard(ctx, sets, engines) {
     if (new Set(selected.map((item) => `${item.mode}/${item.measurement_target}`)).size !== 1) { formError(form, new Error("同一 wave 不能混合 memory/search 或 API/产品端口径")); return; }
     const manual = selected.length === 1 && selected[0].kind === "manual_web";
     if (selected.some((item) => item.kind === "manual_web") && !manual) { formError(form, new Error("人工 Web Wave 只能选择一个目标，不能与 Provider 混合")); return; }
-    if (manual && judge.control.checked && !judgeEngine.value) { formError(form, new Error("请选择独立 Judge，或显式关闭 Judge 并完成后续人工仲裁")); return; }
+    if (judge.control.checked && judgeMode.value === "independent" && !judgeEngine.value) { formError(form, new Error("请选择独立 Judge，或改用同引擎判定")); return; }
     try {
+      const overrides = {};
+      if (!manual) selected.forEach((engine) => {
+        const values = answerOverrides.get(engine.id)?.read() || {};
+        if (Object.keys(values).length) overrides[engine.id] = values;
+      });
       const wave = await api.post(`/api/projects/${ctx.project.id}/waves`, {
         label: labelInput.value, prompt_set_id: Number(setInput.value), engine_ids: selected.map((item) => item.id),
-        repeats: Number(repeats.value), max_tokens: Number(maxTokens.value), use_judge: judge.control.checked,
-        judge_engine_id: manual && judge.control.checked ? Number(judgeEngine.value) : undefined,
+        repeats: Number(repeats.value), ...(manual ? {} : answerParams.read()), use_judge: judge.control.checked,
+        answer_overrides: manual ? undefined : overrides, judge_overrides: judge.control.checked ? judgeParams.read() : undefined,
+        judge_engine_id: judge.control.checked && judgeMode.value === "independent" ? Number(judgeEngine.value) : undefined,
         collection_protocol: manual ? {
           product_url: productUrl.value, platform: platform.value, surface: surface.value, page_mode: pageMode.value,
           networking: networking.control.checked, deep_thinking: deepThinking.control.checked,
@@ -211,6 +260,7 @@ function waveWizard(ctx, sets, engines) {
         manual ? h("div", {}, h("dt", {}, "人工采集任务"), h("dd", {}, wave.estimate.collection_tasks)) : null,
         h("div", {}, h("dt", {}, "Provider 回答调用"), h("dd", {}, wave.estimate.answer_calls)), h("div", {}, h("dt", {}, "Judge 调用"), h("dd", {}, wave.estimate.judge_calls)),
         h("div", {}, h("dt", {}, "检索调用"), h("dd", {}, wave.estimate.search_calls)), h("div", {}, h("dt", {}, "预估费用"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知，不按零成本处理" : wave.estimate.estimated_cost))),
+        dataTable(["引擎", "角色", "基础预估", "含安全重试"], (wave.estimate.by_engine || []).map((entry) => [entry.engine, entry.role === "judge" ? "独立 Judge" : "回答 / 同引擎 Judge", entry.estimated_cost ?? "未知", entry.max_estimated_cost ?? "未知"])),
         h("p", { class: "muted" }, wave.estimate.note), h("div", { class: "form-actions" },
           h("button", { class: "button secondary", onClick: () => { modal.close(); ctx.navigate("measure", { wave: wave.id }); } }, "仅保存方案"),
           h("button", { class: "button", onClick: async () => { try { await startRun(ctx, wave); modal.close(); } catch (error) { if (!handleBudgetError(error, async (reason) => { await startRun(ctx, wave, reason); modal.close(); })) toast(error.message, true); } } }, manual ? "创建人工采集 Run" : "确认调用并创建 Run")));

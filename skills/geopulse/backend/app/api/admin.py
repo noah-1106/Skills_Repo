@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+import sqlite3
 import urllib.parse
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from ..security import (SecretStore, audit, current_user, hash_password, project
 from ..services.budgets import authorize_budget, estimate_health, project_day, release, reserve
 from ..services.costs import record_attempt, summarize_costs
 from ..services.exports import build_project_export
+from ..services.execution import resolve_execution, validate_engine_execution
 from ..services.measurement import engine_execution, engine_public
 from ..services.state import scoped_object
 from ..services.scheduler import iso, parse_time
@@ -31,65 +33,108 @@ def list_engines(project_id: int, request: Request):
         return {"items": [engine_public(row, include_internal=context["role"] == "admin") for row in all_rows(conn, "SELECT * FROM engine_configs WHERE project_id=? ORDER BY id", (project_id,))]}
 
 
-def validate_engine(payload: EngineIn) -> None:
+def validate_engine(payload: EngineIn) -> dict:
     if payload.kind == "manual_web":
         parsed = urllib.parse.urlparse(payload.base_url)
         if payload.measurement_target != "consumer_web" or parsed.scheme != "https" or not parsed.hostname:
             raise HTTPException(400, "人工 Consumer Web 目标必须声明 consumer_web 并提供 HTTPS 产品入口")
         if payload.api_key:
             raise HTTPException(400, "人工 Consumer Web 目标不保存 API Key、Cookie 或登录 Token")
-        return
+        return {}
     if payload.measurement_target != "provider_api":
         raise HTTPException(400, "Provider 引擎只能使用 provider_api；网页观察请创建 manual_web 目标")
     if payload.kind == "demo" and payload.mode != "memory":
         raise HTTPException(400, "demo 仅用于 memory 演示")
     if payload.kind == "openai_compat" and payload.mode != "memory":
-        raise HTTPException(400, "普通 OpenAI-compatible 引擎只能使用 memory；Kimi 检索请选择 kimi_search")
-    if payload.kind == "kimi_search" and payload.mode != "search":
-        raise HTTPException(400, "kimi_search 必须使用 search 模式")
+        raise HTTPException(400, "普通 OpenAI-compatible 引擎只能使用 memory；检索请选择专用 Search Driver")
+    if payload.kind in ("kimi_search", "deepseek_search") and payload.mode != "search":
+        raise HTTPException(400, f"{payload.kind} 必须使用 search 模式")
     if payload.kind != "demo" and (not payload.base_url.startswith("https://") or not payload.model):
         raise HTTPException(400, "生产引擎必须配置 HTTPS Base URL 和模型")
+    values = {
+        "capabilities": payload.capabilities.model_dump(exclude_unset=True),
+        "answer_defaults": payload.answer_defaults.model_dump(exclude_unset=True),
+        "judge_defaults": payload.judge_defaults.model_dump(exclude_unset=True),
+        "health_defaults": payload.health_defaults.model_dump(exclude_unset=True),
+    }
+    validate_engine_execution({"name": payload.name, **values})
+    return values
+
+
+def _check_engine_name(conn, project_id: int, name: str, exclude_id: int | None = None) -> None:
+    if not name:
+        raise HTTPException(400, "引擎名称不能为空")
+    clauses, args = ["project_id=?", "name=?"], [project_id, name]
+    if exclude_id is not None:
+        clauses.append("id!=?")
+        args.append(exclude_id)
+    if one(conn, "SELECT id FROM engine_configs WHERE " + " AND ".join(clauses), args):
+        raise HTTPException(409, detail={"code": "engine_name_conflict", "message": "当前项目已存在同名测量目标"})
+
+
+def _translate_name_conflict(error: sqlite3.IntegrityError) -> None:
+    if "UNIQUE constraint failed: engine_configs.project_id, engine_configs.name" in str(error):
+        raise HTTPException(409, detail={"code": "engine_name_conflict", "message": "当前项目已存在同名测量目标"}) from error
+    raise error
 
 
 @router.post("/projects/{project_id}/engines")
 def create_engine(project_id: int, payload: EngineIn, request: Request):
     context = require_admin(request, project_id)
-    validate_engine(payload)
+    parameters = validate_engine(payload)
+    name = payload.name.strip()
     if payload.kind not in ("demo", "manual_web") and not payload.api_key:
         raise HTTPException(400, "生产引擎需要 API Key")
-    with connect() as conn:
+    with transaction() as conn:
+        _check_engine_name(conn, project_id, name)
         ref = SecretStore().put(payload.api_key) if payload.api_key else ""
-        engine_id = conn.execute("INSERT INTO engine_configs(client_id,project_id,name,vendor,kind,model,base_url,secret_ref,mode,measurement_target,region,cost_rule_json,timeout,rate_limit,enabled,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                 (context["project"]["client_id"], project_id, payload.name, payload.vendor, payload.kind,
-                                  payload.model, payload.base_url.rstrip("/"), ref, payload.mode, payload.measurement_target,
-                                  payload.region, dumps(payload.cost_rule), payload.timeout, payload.rate_limit,
-                                  int(payload.enabled), utc_now())).lastrowid
+        try:
+            engine_id = conn.execute("""INSERT INTO engine_configs(
+                client_id,project_id,name,vendor,kind,model,base_url,secret_ref,mode,measurement_target,region,
+                cost_rule_json,capabilities_json,answer_defaults_json,judge_defaults_json,health_defaults_json,
+                timeout,rate_limit,enabled,created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (context["project"]["client_id"], project_id, name, payload.vendor, payload.kind,
+                 payload.model, payload.base_url.rstrip("/"), ref, payload.mode, payload.measurement_target,
+                 payload.region, dumps(payload.cost_rule), dumps(parameters.get("capabilities", {})),
+                 dumps(parameters.get("answer_defaults", {})), dumps(parameters.get("judge_defaults", {})),
+                 dumps(parameters.get("health_defaults", {})), payload.timeout, payload.rate_limit,
+                 int(payload.enabled), utc_now())).lastrowid
+        except sqlite3.IntegrityError as error:
+            _translate_name_conflict(error)
         row = one(conn, "SELECT * FROM engine_configs WHERE id=?", (engine_id,))
         audit(conn, context["user"]["id"], context["project"], "engine", engine_id, "create", None, engine_public(row))
-        conn.commit()
         return engine_public(row)
 
 
 @router.put("/projects/{project_id}/engines/{engine_id}")
 def update_engine(project_id: int, engine_id: int, payload: EngineIn, request: Request):
     context = require_admin(request, project_id)
-    validate_engine(payload)
-    with connect() as conn:
+    parameters = validate_engine(payload)
+    name = payload.name.strip()
+    with transaction() as conn:
         old = scoped_object(conn, "engine_configs", engine_id, context["project"])
         if (old["kind"] == "manual_web") != (payload.kind == "manual_web"):
             raise HTTPException(409, "Provider 引擎与人工 Web 目标不能互相改型，请新建独立配置")
+        _check_engine_name(conn, project_id, name, engine_id)
         ref = old["secret_ref"]
         if payload.api_key and payload.api_key != "__KEEP__":
             ref = SecretStore().put(payload.api_key)
         if old["kind"] not in ("demo", "manual_web") and not SecretStore().get(ref):
             raise HTTPException(400, "请填写 API Key")
-        conn.execute("UPDATE engine_configs SET name=?,vendor=?,kind=?,model=?,base_url=?,secret_ref=?,mode=?,measurement_target=?,region=?,cost_rule_json=?,timeout=?,rate_limit=?,enabled=? WHERE id=?",
-                     (payload.name, payload.vendor, payload.kind, payload.model, payload.base_url.rstrip("/"), ref,
-                      payload.mode, payload.measurement_target, payload.region, dumps(payload.cost_rule), payload.timeout,
-                      payload.rate_limit, int(payload.enabled), engine_id))
+        try:
+            conn.execute("""UPDATE engine_configs SET name=?,vendor=?,kind=?,model=?,base_url=?,secret_ref=?,mode=?,
+                measurement_target=?,region=?,cost_rule_json=?,capabilities_json=?,answer_defaults_json=?,
+                judge_defaults_json=?,health_defaults_json=?,timeout=?,rate_limit=?,enabled=? WHERE id=?""",
+                (name, payload.vendor, payload.kind, payload.model, payload.base_url.rstrip("/"), ref,
+                 payload.mode, payload.measurement_target, payload.region, dumps(payload.cost_rule),
+                 dumps(parameters.get("capabilities", {})), dumps(parameters.get("answer_defaults", {})),
+                 dumps(parameters.get("judge_defaults", {})), dumps(parameters.get("health_defaults", {})),
+                 payload.timeout, payload.rate_limit, int(payload.enabled), engine_id))
+        except sqlite3.IntegrityError as error:
+            _translate_name_conflict(error)
         row = one(conn, "SELECT * FROM engine_configs WHERE id=?", (engine_id,))
         audit(conn, context["user"]["id"], context["project"], "engine", engine_id, "update", engine_public(old), engine_public(row))
-        conn.commit()
         return engine_public(row)
 
 
@@ -103,6 +148,7 @@ def engine_health(project_id: int, engine_id: int, request: Request, payload: He
         if engine["kind"] == "manual_web":
             raise HTTPException(409, "人工 Consumer Web 目标没有 Provider 健康检查或外部调用")
         estimate = estimate_health(engine)
+        health_execution = resolve_execution(engine, "health")
         decision = authorize_budget(conn, context["project"], estimate, actor=context["user"]["id"],
                                     confirmation_reason=reason)
         reserve(conn, context["project"], decision, operation_id=operation_id, actor=context["user"]["id"])
@@ -114,7 +160,7 @@ def engine_health(project_id: int, engine_id: int, request: Request, payload: He
     operations = []
     try:
         provider = build_provider(engine, SecretStore().get(engine["secret_ref"]), ["GeoPulse", "Profound"])
-        result = provider.ask("只回答：健康检查通过", {"max_tokens": 8, "temperature": 0})
+        result = provider.ask("只回答：健康检查通过", health_execution)
         operations = result.operations
         status, detail = "healthy", f"{result.model} / {result.latency_ms}ms"
     except Exception as error:

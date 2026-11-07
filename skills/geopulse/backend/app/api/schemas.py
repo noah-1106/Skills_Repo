@@ -94,14 +94,31 @@ class CollectionProtocolIn(Model):
     protocol_version: Literal["manual-web-v1"] = "manual-web-v1"
 
 
+class ExecutionParams(Model):
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=1, le=8000)
+    system_prompt: str | None = None
+
+
+class ModelCapabilities(Model):
+    context_window: int | None = Field(default=None, gt=0)
+    max_output_tokens: int | None = Field(default=None, gt=0)
+    supports_temperature: bool | None = None
+    allowed_temperatures: list[float] | None = None
+    supports_json_mode: bool | None = None
+    reasoning_tokens_share_output_budget: bool | None = None
+
+
 class WaveIn(Model):
     prompt_set_id: int
     label: str
     engine_ids: list[int]
     repeats: int = Field(default=3, ge=1, le=5)
-    temperature: float = Field(default=0.2, ge=0, le=2)
-    max_tokens: int = Field(default=700, ge=100, le=8000)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, ge=100, le=8000)
     system_prompt: str | None = None
+    answer_overrides: dict[int, ExecutionParams] = {}
+    judge_overrides: ExecutionParams = ExecutionParams()
     use_judge: bool = True
     anchor_at: str | None = None
     stats: dict[str, Any] = {}
@@ -159,7 +176,7 @@ class ReportIn(Model):
 class EngineIn(Model):
     name: str
     vendor: str
-    kind: Literal["demo", "openai_compat", "kimi_search", "manual_web"]
+    kind: Literal["demo", "openai_compat", "kimi_search", "deepseek_search", "manual_web"]
     model: str = ""
     base_url: str = ""
     api_key: str = ""
@@ -167,6 +184,10 @@ class EngineIn(Model):
     measurement_target: Literal["provider_api", "consumer_web", "consumer_app"] = "provider_api"
     region: str = ""
     cost_rule: dict[str, Any] = {}
+    capabilities: ModelCapabilities = ModelCapabilities()
+    answer_defaults: ExecutionParams = ExecutionParams()
+    judge_defaults: ExecutionParams = ExecutionParams()
+    health_defaults: ExecutionParams = ExecutionParams()
     timeout: int = Field(default=60, ge=1, le=300)
     rate_limit: float = Field(default=12, gt=0, le=600)
     enabled: bool = True

@@ -50,7 +50,7 @@ export GEOPULSE_WORKERS=4
 curl --fail http://127.0.0.1:8700/api/health
 ```
 
-响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。Search 和 Chat 健康调用会进入统一调用台账，同时保留业务分组 `kind=health` 与实际计费操作 `operation=search/answer`，因此运营成本和用量汇总不会漏掉健康检查。
+响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。健康检查使用引擎自己的 health 有效参数，不再固定 temperature=0/max_tokens=8。Search 和 Chat 健康调用会进入统一调用台账，同时保留业务分组 `kind=health` 与实际计费操作 `operation=search/answer`，因此运营成本和用量汇总不会漏掉健康检查。
 
 真实 smoke 执行前逐项确认：
 
@@ -61,7 +61,7 @@ curl --fail http://127.0.0.1:8700/api/health
 5. 当前价格规则和最大可能费用；
 6. 超时结果不明时不自动重放。
 
-CI、pytest、浏览器 smoke/governance/manual-web 和 2700 压力脚本均不执行真实付费调用。Kimi Search 合同 mock 通过不等于外部账号 live smoke 通过。DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行。人工 Consumer Web 的测试入口和 Demo Judge 只验证离线产品闭环，不代表真实消费者平台 live 验收。后续真实 smoke 仍需独立预估和即时确认，既有确认不自动延伸到新调用。
+CI、pytest、浏览器 smoke/governance/manual-web/model-execution 和 2700 压力脚本均不执行真实付费调用。Kimi 与 DeepSeek Search 合同 mock 通过不等于外部账号 live smoke 通过。本轮经单独确认完成了两组隔离单题 live：DeepSeek Search+Chat 各 1 次、10 条引用，实际返回模型 `deepseek-flash`；Kimi Search+Chat 各 1 次，`kimi-k3.1-pro` 使用 `temperature=1,max_tokens=2048` 返回 5 条引用，随后 DeepSeek 独立 Judge 使用 `temperature=0,max_tokens=1800` 和 JSON mode 返回 `llm-judge`，回答/Judge 引擎归属分开。两组 Run 均为 done、回答均为有效样本，未自动重试。未配置价格规则，成本保持未知；单题 live 不覆盖失败路径、账单对账或生产准确率。Geo agent 的既有报告另记录 DeepSeek Flash 单题真实链与 MiniMax 真实结构化 Judge 补验，不是本轮自动化执行结果。人工 Consumer Web 的测试入口和 Demo Judge 只验证离线产品闭环，不代表真实消费者平台 live 验收。后续真实 smoke 仍需独立预估和即时确认，既有确认不自动延伸到新调用。
 
 ## 4. 队列与调度
 
@@ -157,7 +157,7 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py migrate
 ```
 
-当前 schema 为 v3，`PRAGMA user_version=3`。迁移按 `001_v2.sql`、`002_execution_governance.sql`、`003_manual_consumer_web.sql` 顺序执行并记录 checksum，包含人工采集、附件 BLOB、raw-text hash 和 citation origin。程序拒绝静默打开未知旧版本或更新版本。迁移前会自动创建带 manifest 的一致性备份；本版本不迁移旧 v1 回答数据。
+当前 schema 为 v4，`PRAGMA user_version=4`。迁移按 `001_v2.sql`、`002_execution_governance.sql`、`003_manual_consumer_web.sql`、`004_model_execution_search.sql` 顺序执行并记录 checksum。v4 增加 DeepSeek Search 类型、模型能力、answer/Judge/health 默认参数，以及调用请求参数和响应元数据；populated 迁移测试保留 engine ID、回答、调用台账、报告和证据 BLOB。程序拒绝静默打开未知旧版本或更新版本。迁移前会自动创建带 manifest 的一致性备份；本版本不迁移旧 v1 回答数据。
 
 ## 8. 项目导出与删除
 
@@ -209,4 +209,4 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 .venv/bin/python -m pytest -q
 ```
 
-CI 还执行前端 ESM、三套真实浏览器、黄金集、模拟压力和 secret scanning。HTTP 薄业务 CLI 的认证、确认和文件校验见 [cli.md](cli.md)。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。
+CI 还执行前端 ESM、四套真实浏览器、黄金集、模拟压力和 secret scanning。HTTP 薄业务 CLI 的认证、确认和文件校验见 [cli.md](cli.md)。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。

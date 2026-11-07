@@ -5,9 +5,9 @@ from collections import defaultdict
 from typing import Any
 
 from ..db import all_rows, dumps, loads, one, utc_now
+from .execution import answer_execution_for, judge_execution_for
 
 JUDGE_INPUT_TOKENS = 2500
-JUDGE_OUTPUT_TOKENS = 1800
 
 
 def rule_for(engine: dict) -> dict:
@@ -30,7 +30,9 @@ def quote(rule: dict, operation: str, usage: dict) -> tuple[float | None, str, l
     if operation == "search":
         if "search_per_call" not in rule:
             missing.append("search_per_call")
-        calls = int(usage.get("search_calls") or 1)
+        calls = int(usage["search_calls"]) if "search_calls" in usage else 1
+        if calls == 0:
+            return 0.0, currency, []
         if missing:
             return None, currency, missing
         return float(rule["search_per_call"]) * calls, currency, []
@@ -71,96 +73,95 @@ def estimate_wave(conn, wave: dict) -> dict:
     protocol = loads(wave["protocol_json"], {})
     prompts = len(protocol.get("prompt_item_ids") or [])
     engines = frozen_engines(conn, wave)
-    signatures = protocol.get("engine_signature") or []
+    signatures = {int(item["id"]): item for item in protocol.get("engine_signature") or []}
     manual_web = protocol.get("measurement_target") == "consumer_web"
-    collection_tasks = prompts * int(protocol.get("repeats") or 1) if manual_web else 0
-    judge_engine = loads(wave.get("judge_snapshot_json"), {}) if manual_web and protocol.get("use_judge") else {}
-    cost_engines = ([(judge_engine, protocol.get("judge_signature") or judge_engine)] if judge_engine else
-                    [] if manual_web else list(zip(engines, signatures)))
     repeats = int(protocol.get("repeats") or 1)
     retries = int(protocol.get("max_safe_retries") or 0)
-    answer_calls = 0 if manual_web else prompts * len(engines or signatures) * repeats
-    judge_calls = collection_tasks if manual_web and protocol.get("use_judge") else answer_calls if protocol.get("use_judge") else 0
-    search_calls = 0 if manual_web else answer_calls if protocol.get("mode") == "search" else 0
     multiplier = 1 + retries
+    collection_tasks = prompts * repeats if manual_web else 0
+    answer_calls = 0 if manual_web else prompts * len(engines) * repeats
+    judge_calls = (collection_tasks if manual_web else answer_calls) if protocol.get("use_judge") else 0
+    search_calls = answer_calls if not manual_web and protocol.get("mode") == "search" else 0
+    independent = loads(wave.get("judge_snapshot_json"), {}) or None
+    entries = []
+    if not manual_web:
+        for engine in engines:
+            engine_id = int(engine["id"])
+            answer = answer_execution_for(protocol, engine_id)
+            operations = [("answer", answer, "answer")]
+            if protocol.get("mode") == "search":
+                operations.append(("search", {}, "search"))
+            if protocol.get("use_judge") and not independent:
+                operations.append(("judge", judge_execution_for(protocol, engine_id), "judge"))
+            entries.append((engine, signatures.get(engine_id, engine), prompts * repeats, operations))
+    if protocol.get("use_judge") and independent:
+        engine_ids = protocol.get("engine_ids") or []
+        execution = judge_execution_for(protocol, int(engine_ids[0])) if engine_ids else {}
+        entries.append((independent, protocol.get("judge_signature") or independent,
+                        collection_tasks if manual_web else answer_calls, [("judge", execution, "judge")]))
+    unknown_components = []
+    if protocol.get("use_judge") and protocol.get("judge_signature") and not independent:
+        unknown_components.append("judge:execution_snapshot")
     by_engine = []
     totals = {"base": 0.0, "max": 0.0}
     currencies = set()
-    unknown_components = ["judge:execution_snapshot"] if manual_web and protocol.get("use_judge") and not judge_engine else []
     estimated_input = 0
     estimated_output = 0
-    for engine, signature in cost_engines:
-        if not engine:
-            continue
+    for engine, signature, calls, operations in entries:
         rule = rule_for(engine)
-        calls = collection_tasks if manual_web else prompts * repeats
         parts = []
-        for scale, key in ((1, "base"), (multiplier, "max")):
-            answer_usage = {
-                "prompt_tokens": calls * scale * int(rule.get("estimated_input_tokens", 1200)),
-                "completion_tokens": calls * scale * int(rule.get("estimated_output_tokens") or (protocol.get("judge_execution") or {}).get("max_tokens") or protocol.get("max_tokens") or 700),
-            }
-            operations = [] if manual_web else [("answer", answer_usage)]
-            if protocol.get("use_judge"):
-                operations.append(("judge", {
-                    "prompt_tokens": calls * scale * JUDGE_INPUT_TOKENS,
-                    "completion_tokens": calls * scale * JUDGE_OUTPUT_TOKENS,
-                }))
-            if not manual_web and protocol.get("mode") == "search":
-                operations.append(("search", {"search_calls": calls * scale}))
-            for operation, usage in operations:
+        for scale, bucket in ((1, "base"), (multiplier, "max")):
+            for operation, execution, role in operations:
+                if operation == "search":
+                    usage = {"search_calls": calls * scale}
+                else:
+                    default_output = 1800 if role == "judge" else 700
+                    usage = {
+                        "prompt_tokens": calls * scale * (JUDGE_INPUT_TOKENS if role == "judge" else int(rule.get("estimated_input_tokens", 1200))),
+                        "completion_tokens": calls * scale * int(execution.get("max_tokens") or rule.get("estimated_output_tokens") or default_output),
+                    }
+                    if scale == 1:
+                        estimated_input += usage["prompt_tokens"]
+                        estimated_output += usage["completion_tokens"]
                 amount, currency, missing = quote(rule, operation, usage)
                 currencies.add(currency)
                 if missing:
                     unknown_components.extend(f"{signature.get('name', engine.get('name'))}:{item}" for item in missing)
                 else:
-                    totals[key] += amount or 0
-                parts.append({"operation": operation, "bucket": key, "amount": amount, "currency": currency, "missing": missing})
+                    totals[bucket] += amount or 0
+                parts.append({"operation": operation, "bucket": bucket, "amount": amount,
+                              "currency": currency, "missing": missing})
         base_parts = [part for part in parts if part["bucket"] == "base"]
         max_parts = [part for part in parts if part["bucket"] == "max"]
         by_engine.append({
             "engine": signature.get("name", engine.get("name")),
+            "role": "judge" if operations[0][0] == "judge" else "answer",
             "estimated_cost": round(sum(part["amount"] for part in base_parts if part["amount"] is not None), 6)
                 if all(part["amount"] is not None for part in base_parts) else None,
             "max_estimated_cost": round(sum(part["amount"] for part in max_parts if part["amount"] is not None), 6)
                 if all(part["amount"] is not None for part in max_parts) else None,
             "known_cost": round(sum(part["amount"] or 0 for part in base_parts), 6),
-            "currency": rule_for(engine).get("currency", "CNY"),
+            "currency": rule.get("currency", "CNY"),
             "unknown_components": sorted({item for part in parts for item in part["missing"]}),
         })
-        if not manual_web:
-            estimated_input += calls * int(rule.get("estimated_input_tokens", 1200))
-            estimated_output += calls * int(rule.get("estimated_output_tokens") or protocol.get("max_tokens") or 700)
-        if protocol.get("use_judge"):
-            estimated_input += calls * JUDGE_INPUT_TOKENS
-            estimated_output += calls * JUDGE_OUTPUT_TOKENS
     complete = not unknown_components and len(currencies) <= 1
     currency = next(iter(currencies)) if len(currencies) == 1 else None
     return {
-        "prompt_items": prompts,
-        "engines": len(engines or signatures),
-        "repeats": repeats,
-        "collection_tasks": collection_tasks,
-        "answer_calls": answer_calls,
-        "judge_calls": judge_calls,
-        "search_calls": search_calls,
+        "prompt_items": prompts, "engines": len(engines), "repeats": repeats,
+        "collection_tasks": collection_tasks, "answer_calls": answer_calls,
+        "judge_calls": judge_calls, "search_calls": search_calls,
         "total_external_calls": answer_calls + judge_calls + search_calls,
         "max_external_calls": (answer_calls + judge_calls + search_calls) * multiplier,
-        "estimated_input_tokens": estimated_input,
-        "estimated_output_tokens": estimated_output,
+        "estimated_input_tokens": estimated_input, "estimated_output_tokens": estimated_output,
         "max_estimated_input_tokens": estimated_input * multiplier,
         "max_estimated_output_tokens": estimated_output * multiplier,
         "estimated_cost": round(totals["base"], 6) if complete else None,
         "max_estimated_cost": round(totals["max"], 6) if complete else None,
-        "known_cost": round(totals["base"], 6),
-        "currency": currency,
-        "cost_unknown": bool(unknown_components),
-        "unknown_components": sorted(set(unknown_components)),
-        "mixed_currencies": len(currencies) > 1,
-        "by_engine": by_engine,
-        "blocking": False,
+        "known_cost": round(totals["base"], 6), "currency": currency,
+        "cost_unknown": bool(unknown_components), "unknown_components": sorted(set(unknown_components)),
+        "mixed_currencies": len(currencies) > 1, "by_engine": by_engine, "blocking": False,
         "note": ("人工采集不产生 Provider 回答或 Search 调用；仅独立 Judge 计入外部调用与费用。token 和金额为启发式预估，不是厂商账单。"
-                 if manual_web else "调用次数区分基础预估与安全重试上限；token 和金额为启发式预估，不是厂商账单或绝对费用上限。"),
+                 if manual_web else "回答、Search 与 Judge 分引擎预估；调用次数区分基础与安全重试上限，金额不是厂商账单或绝对费用上限。"),
     }
 
 
@@ -170,7 +171,10 @@ def record_attempt(conn, *, project: dict, engine: dict, operation: dict,
     kind = group or operation["kind"]
     rule = rule_for(engine)
     usage = operation.get("usage") or {}
-    cost, currency, _ = quote(rule, billing_operation, usage)
+    if operation.get("billable") is False:
+        cost, currency = 0.0, str(rule.get("currency") or "CNY").upper()
+    else:
+        cost, currency, _ = quote(rule, billing_operation, usage)
     answer_id = answer.get("id") if answer else None
     if answer_id:
         attempt_no = operation.get("attempt_no")
@@ -183,14 +187,15 @@ def record_attempt(conn, *, project: dict, engine: dict, operation: dict,
     cursor = conn.execute(
         """INSERT OR IGNORE INTO call_attempts(
             answer_id,client_id,project_id,run_id,engine_config_id,kind,operation,attempt_no,status,
-            request_id,model,latency_ms,usage_json,cost,currency,cost_rule_json,error_type,error_detail,created_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            request_id,model,latency_ms,usage_json,request_params_json,response_meta_json,cost,currency,cost_rule_json,error_type,error_detail,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             answer_id,
             (answer or project)["client_id"], (answer or project)["project_id"] if answer else project["id"],
             (answer or {}).get("run_id"), engine.get("id"), kind, billing_operation, attempt_no,
             operation.get("status") or "failed", operation.get("request_id"), operation.get("model"),
-            operation.get("latency_ms"), dumps(usage), cost, currency, dumps(rule),
+            operation.get("latency_ms"), dumps(usage), dumps(operation.get("request_params") or {}),
+            dumps(operation.get("response_meta") or {}), cost, currency, dumps(rule),
             operation.get("error_type"), str(operation.get("error_detail") or "")[:1000] or None,
             operation.get("created_at") or utc_now(),
         ),

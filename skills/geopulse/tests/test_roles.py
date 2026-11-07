@@ -41,6 +41,7 @@ def test_project_role_api_contracts(client, official_demo, role):
         assert ("costs" in report_detail["snapshot"]) == (role in ("admin", "analyst"))
         assert ("internal_samples" in report_detail["snapshot"]) == (role in ("admin", "analyst"))
         assert all("budget" not in wave["stats"] for wave in report_detail["snapshot"]["waves"]) == (role in ("reviewer", "viewer"))
+        assert all("system_prompt" not in str(wave["protocol"]) for wave in report_detail["snapshot"]["waves"]) == (role in ("reviewer", "viewer"))
         api(scoped, "GET", f"/api/projects/{client.project_id}/operations", expected=200 if role in ("admin", "analyst") else 403)
         api(scoped, "GET", f"/api/projects/{client.project_id}/export", expected=200 if role == "admin" else 403)
         api(scoped, "GET", f"/api/projects/{client.project_id}/retention/preview", expected=200 if role in ("admin", "analyst") else 403)

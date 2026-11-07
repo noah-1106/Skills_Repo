@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.2.0 — 2026-11-07
+
+### 模型能力、执行参数与独立 Judge
+
+- 新增 schema v4：引擎可声明上下文/输出能力、temperature 支持/允许值、JSON mode 和推理预算特性，并分别配置 answer/Judge/health 默认参数。重复引擎名称的创建和更新统一返回结构化 409。
+- Wave 按回答引擎冻结有效 `answer_execution` / `judge_execution`。省略字段继承引擎或内建默认，显式 null 从请求省略；引擎后续编辑不改写历史 Wave。健康检查不再固定 0/8，严格比较先归一化旧新协议。
+- 普通 Provider 支持同引擎或指定独立 Judge。独立 Judge 不能同时是回答引擎，Demo/真实不混用；回答、Judge、Search 的 engine_config_id、usage、成本和预估分别归属。多回答引擎只生成一份独立 Judge 调用序列，Search 不计入 Judge。
+- OpenAI-compatible 请求支持显式 null 和 JSON mode 能力。完整起始 `<think>…</think>` 只分离可见回答，推理正文不保存；未闭合、空可见后缀、reasoning-only 和 length 截断继续排除有效样本。
+
+### DeepSeek Search 与 CLI
+
+- 新增 `deepseek_search + provider_api + search`，使用官方 `POST /v1/tools/search` 的 `{query,count,need_content:false}` 与 `results[]`，Search 后单独调用 Chat。长查询确定性截断并保留完整原始 Prompt；本轮不实现 Fetch。
+- Search HTTP 失败、空结果和无有效资料不调用 Chat、不降级 memory；失败/空结果显式零计费，成功 Search 后 Chat 失败仍保留 Search 成本。Kimi 空结果同步明确 `search_calls=0,billable=false`。
+- CLI 新增 `schema engine|wave|collection-draft` 和 `example engine|wave|manual-web-wave|collection-draft`；schema 直接读取服务 OpenAPI，示例不含秘密且无业务写副作用。人工正式提交响应和文档明确 `collection submit → judging → run-worker` 的下一步。
+
+### 前端与验证
+
+- 管理页以渐进披露配置模型能力和三组默认参数；测量向导支持普通 Provider 独立 Judge、按回答引擎覆盖、Judge 参数、分引擎费用和冻结参数摘要。证据详情显示 allowlisted 请求参数与非敏感响应元数据。
+- 110 项 pytest 通过，覆盖参数优先级、能力校验、重复名称 409、独立 Judge worker/成本、DeepSeek 协议与失败语义、think 处理、旧新协议比较、CLI schema/example 和 populated v3→v4 migration。
+- 四套真实 Chrome 验收通过：八工作流、治理、人工 Web，以及模型参数/DeepSeek 离线配置/普通 Provider 独立 Judge。新增路径覆盖 1440/768/390，无外部请求。
+- 自动化未执行真实付费调用；另行确认的两组隔离单题 live 已通过。DeepSeek Search+Chat 各 1 次、10 条引用，实际返回模型 `deepseek-flash`；Kimi Search+Chat 各 1 次，`kimi-k3.1-pro` 使用 `temperature=1,max_tokens=2048` 返回 5 条引用，随后 DeepSeek 独立 Judge 使用 `temperature=0,max_tokens=1800` 和 JSON mode 返回 `llm-judge`，回答/Judge 引擎归属分开。两组 Run 均为 done、回答均为有效样本，未自动重试；价格未配置故成本未知，单题 live 不覆盖失败路径或账单对账。未实现 Fetch、自动 Collector、持久登录、DOM 自动提取、验证码处理/绕过或多平台爬虫。
+
 ## 2.1.0 — 2026-11-07
 
 ### 报告与浏览器合同

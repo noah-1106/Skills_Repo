@@ -20,6 +20,8 @@ from ..security import SecretStore, audit
 from .budgets import authorize_budget, release as release_budget, reserve
 from .costs import estimate_wave as estimate_wave_cost
 from .costs import frozen_engines, record_attempt, rule_for
+from .execution import (answer_execution_for, execution_maps, judge_execution_for,
+                        legacy_execution_fields)
 from .state import logical_id
 
 VALID_SAMPLE_DEFINITION = "succeeded_nonempty_v1"
@@ -50,6 +52,8 @@ def engine_public(row: dict, include_internal: bool = False) -> dict:
         result["cost_rule"] = rule
     else:
         result.pop("cost_rule", None)
+    for key in ("capabilities", "answer_defaults", "judge_defaults", "health_defaults"):
+        result[key] = loads(result.pop(f"{key}_json", "{}"), {})
     result["has_api_key"] = bool(row.get("secret_ref"))
     return result
 
@@ -94,8 +98,16 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
         manual_web = targets == {"consumer_web"} and len(engines) == 1 and engines[0]["kind"] == "manual_web"
         if targets == {"consumer_web"} and not manual_web:
             raise HTTPException(409, "Consumer Web Wave 只能选择一个 manual_web 目标，不能与 Provider 或其他目标混合")
-        if not manual_web and (payload.get("collection_protocol") or payload.get("judge_engine_id")):
-            raise HTTPException(400, "采集协议和独立 Judge 仅用于人工 Consumer Web Wave")
+        if not manual_web and payload.get("collection_protocol"):
+            raise HTTPException(400, "采集协议仅用于人工 Consumer Web Wave")
+        use_judge = bool(payload.get("use_judge", True))
+        if not use_judge and (payload.get("judge_engine_id") or payload.get("judge_overrides")):
+            raise HTTPException(409, "关闭 Judge 时不能配置 Judge 引擎或参数")
+        if manual_web and payload.get("answer_overrides"):
+            raise HTTPException(400, "人工 Web 没有 Provider 回答参数；请只配置独立 Judge")
+        selected_override_ids = {int(value) for value in (payload.get("answer_overrides") or {})}
+        if not selected_override_ids <= set(engine_ids):
+            raise HTTPException(400, "answer_overrides 包含未选中的回答引擎")
         collection_protocol = None
         judge_engine = None
         judge_signature = None
@@ -107,15 +119,21 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
             collection_protocol["product_url"] = engines[0]["base_url"].rstrip("/")
             if bool(collection_protocol.get("networking")) != (engines[0]["mode"] == "search"):
                 raise HTTPException(409, "采集协议的联网声明必须与人工目标的 memory/search 口径一致")
-            if payload.get("use_judge", True):
-                judge_engine = one(conn, "SELECT * FROM engine_configs WHERE id=? AND project_id=? AND client_id=? AND enabled=1 AND kind!='manual_web'",
-                                   (payload.get("judge_engine_id"), project["id"], project["client_id"]))
-                if not judge_engine:
-                    raise HTTPException(409, "人工 Web 默认全量 Judge，必须选择一个独立 Provider Judge 引擎")
-                judge_signature = {"id": judge_engine["id"], "name": judge_engine["name"],
-                                   "kind": judge_engine["kind"], "model": judge_engine["model"],
-                                   "mode": judge_engine["mode"], "measurement_target": judge_engine["measurement_target"],
-                                   "role": "independent_judge"}
+            if use_judge and not payload.get("judge_engine_id"):
+                raise HTTPException(409, "人工 Web 默认全量 Judge，必须选择一个独立 Provider Judge 引擎")
+        if use_judge and payload.get("judge_engine_id"):
+            judge_engine = one(conn, "SELECT * FROM engine_configs WHERE id=? AND project_id=? AND client_id=? AND enabled=1 AND kind!='manual_web'",
+                               (payload.get("judge_engine_id"), project["id"], project["client_id"]))
+            if not judge_engine:
+                raise HTTPException(409, "必须选择当前项目已启用的独立 Provider Judge 引擎")
+            if not manual_web and int(judge_engine["id"]) in engine_ids:
+                raise HTTPException(409, "独立 Judge 不能同时是本次回答引擎；同引擎判定请留空 Judge 选择")
+            if not manual_web and (judge_engine["kind"] == "demo") != all(engine["kind"] == "demo" for engine in engines):
+                raise HTTPException(409, "Provider 回答与 Judge 不能混用 Demo 和真实引擎；请使用同类型隔离配置")
+            judge_signature = {"id": judge_engine["id"], "name": judge_engine["name"],
+                               "kind": judge_engine["kind"], "model": judge_engine["model"],
+                               "mode": judge_engine["mode"], "measurement_target": judge_engine["measurement_target"],
+                               "role": "independent_judge"}
         entities = [entity_public(row) for row in all_rows(
             conn, "SELECT * FROM brand_entities WHERE project_id=? AND client_id=? AND status='confirmed' AND role IN ('primary','competitor') AND valid_to IS NULL ORDER BY role,name",
             (project["id"], project["client_id"]))]
@@ -136,25 +154,28 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
         engine_signature = [{"id": engine["id"], "name": engine["name"], "kind": engine["kind"],
                              "model": engine["model"], "mode": engine["mode"],
                              "measurement_target": engine["measurement_target"]} for engine in engines]
+        answer_map, judge_map = execution_maps(engines, judge_engine, {**payload, "use_judge": use_judge},
+                                                manual_web=manual_web)
+        legacy_fields = legacy_execution_fields(answer_map, judge_map, manual_web=manual_web)
         protocol = {
             "prompt_set_id": prompt_set["id"], "prompt_set_hash": prompt_set["content_hash"],
             "prompt_item_ids": [item["id"] for item in items], "entity_ids": entity_ids,
             "entity_version": entity_version, "competitor_pool_hash": competitor_pool_hash,
             "engine_ids": engine_ids, "engine_signature": engine_signature,
-            "repeats": repeats, "temperature": None if manual_web else float(payload.get("temperature", 0.2)),
-            "system_prompt": None if manual_web else (payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。"),
-            "max_tokens": None if manual_web else int(payload.get("max_tokens", 700)), "language": project["language"],
+            "repeats": repeats, "temperature": legacy_fields["temperature"],
+            "system_prompt": legacy_fields["system_prompt"],
+            "max_tokens": legacy_fields["max_tokens"], "language": project["language"],
             "market": project["market"], "judge_version": JUDGE_VERSION, "mode": modes.pop(),
             "measurement_target": targets.pop(),
             "valid_sample_definition": "succeeded_nonempty_evidence_v1" if manual_web else VALID_SAMPLE_DEFINITION,
             "stratum_weights": loads(prompt_set["weights_json"], {}),
             "max_safe_retries": int(payload.get("max_safe_retries", 2)),
-            "use_judge": bool(payload.get("use_judge", True)),
+            "use_judge": use_judge,
+            "judge_mode": "disabled" if not use_judge else "independent" if judge_engine else "answer_engine",
             "collection_protocol": collection_protocol,
+            "answer_execution": answer_map,
             "judge_signature": judge_signature,
-            "judge_execution": {"temperature": float(payload.get("temperature", 0.2)),
-                                "system_prompt": payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。",
-                                "max_tokens": int(payload.get("max_tokens", 700))} if manual_web else None,
+            "judge_execution": judge_map,
             "reported_model_versions": {
                 str(engine["id"]): engine["model"] for engine in engines},
         }
@@ -413,7 +434,7 @@ def process_answer(answer_id: int) -> None:
             provider = build_provider(engine, SecretStore().get(engine.get("secret_ref", "")),
                                       [entity["name"] for entity in sorted(entities, key=lambda item: item["role"] != "primary")])
             with _engine_slot(engine):
-                result = provider.ask(context["prompt"]["text"], protocol)
+                result = provider.ask(context["prompt"]["text"], answer_execution_for(protocol, context["engine_config_id"]))
             raw_text, citations = result.text, result.citations
             cancel_after_answer = False
             with transaction() as conn:
@@ -454,27 +475,29 @@ def process_answer(answer_id: int) -> None:
                              (type(error).__name__, str(error)[:1000], utc_now(), answer_id))
                 _finalize_run(conn, context["run_id"])
             return
-    demo = engine["kind"] == "demo"
+    independent_judge = context.get("judge_engine")
+    demo = engine["kind"] == "demo" and not independent_judge
     observations = fallback_observations(raw_text, entities, demo=demo)
     discovered: list[dict] = []
     if protocol.get("use_judge") and not demo:
-        judge_engine = context.get("judge_engine") if manual_web else engine
+        judge_engine = independent_judge or engine
         if not judge_engine or judge_engine.get("kind") == "manual_web":
             for observation in observations:
                 observation["judge_status"] = "judge-config-missing"
                 observation["review_status"] = "pending"
         else:
             try:
+                judge_execution = judge_execution_for(protocol, context["engine_config_id"])
                 if judge_engine.get("kind") == "demo":
                     observations = fallback_observations(raw_text, entities, demo=True)
                     operations = [{"kind": "judge", "status": "succeeded", "model": "geopulse-demo-judge",
-                                   "usage": {}, "request_id": "demo-judge"}]
+                                   "usage": {}, "request_id": "demo-judge",
+                                   "request_params": {key: judge_execution.get(key) for key in ("temperature", "max_tokens", "json_mode")}}]
                 else:
                     provider = build_provider(judge_engine, SecretStore().get(judge_engine.get("secret_ref", "")),
                                               [entity["name"] for entity in sorted(entities, key=lambda item: item["role"] != "primary")])
-                    judge_protocol = {**protocol, **(protocol.get("judge_execution") or {})} if manual_web else protocol
                     with _engine_slot(judge_engine):
-                        observations, discovered, judged = judge_answer(provider, raw_text, entities, judge_protocol, citations)
+                        observations, discovered, judged = judge_answer(provider, raw_text, entities, judge_execution, citations)
                     operations = judged.operations
                 with transaction() as conn:
                     _record_operations(conn, context, operations, engine=judge_engine)

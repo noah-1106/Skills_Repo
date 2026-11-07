@@ -46,6 +46,8 @@ jobs:
         run: python tests/browser_governance.py
       - name: Real-browser manual Consumer Web checks
         run: python tests/browser_manual_web.py
+      - name: Real-browser model execution and independent Judge checks
+        run: python tests/browser_model_execution.py
       - name: Upload acceptance results
         if: always()
         uses: actions/upload-artifact@v4

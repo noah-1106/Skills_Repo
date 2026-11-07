@@ -16,7 +16,7 @@
 | 项目总览、待办和下一步 | `GET /overview` | 从正式 Run、审批、告警和调度实时聚合 | 全项目角色；成本字段裁剪 | `test_workflow.py`、桌面/移动浏览器 | 已闭环 |
 | 问题集创建、生成、导入、审核、冻结 | `/prompt-sets*` | Prompt 版本、内容 hash、冻结快照、diff | 写入 analyst；审核/冻结 admin | `test_workflow.py`、浏览器 scaffold | 已闭环 |
 | 实体卡、冲突、消歧和版本 | `/entities*` | 不可变实体版本、审核理由、竞品池 | 新建 analyst；审核 admin | `test_workflow.py`、浏览器 XSS/审核 | 已闭环 |
-| Wave 创建与冻结预估 | `POST /waves`、`services.costs` | 公开协议签名 + 内部引擎执行快照 | analyst；成本仅 admin/analyst | `test_execution_governance.py` | 已闭环 |
+| Wave 创建与冻结预估 | `POST /waves`、`services.costs` | 公开协议签名 + 按回答引擎有效参数 + 内部执行快照 | analyst；成本仅 admin/analyst | `test_execution_governance.py`、`test_model_execution_v22.py` | 已闭环 |
 | Run 创建、取消、重试、正式指定 | `/waves/{id}/runs`、`/runs/{id}/*` | SQLite 队列、worker、取消与 revision 保留 | 创建/取消 analyst；重试/正式 admin | worker、预算和浏览器测试 | 已闭环 |
 | 人工 Web 目标与冻结协议 | `manual_web + consumer_web`、`collection_protocol` | 单一 Web 目标、实际页面/会话协议、独立 Judge 快照 | 目标写入 admin；Wave 创建 analyst | `test_manual_web.py`、真实 Chrome | 已闭环；不包含自动 Collector |
 | 人工草稿、截图与不可变提交 | `/answers/{id}/collection*`、`/attachments*` | 草稿、raw hash、SQLite 证据 BLOB、人工引用、失败/重采 | 编辑 admin/analyst；只读角色无内部附件 | API、权限、hash、迁移与真实 Chrome | 已闭环；人工辅助采集 |
@@ -33,7 +33,9 @@
 
 | 界面能力 | API / 服务 | 持久化与执行 | 权限 | 验收 | 状态 |
 |---|---|---|---|---|---|
-| 引擎连接和结构化价格 | `/engines*` | secret reference、独立 0600 secret store；旧 Wave 快照不变 | 全角色可读公开配置；价格/写入 admin | 角色脱敏、冻结快照、浏览器表单 | 已闭环 |
+| 引擎连接和结构化价格 | `/engines*` | secret reference、独立 0600 secret store；项目内重名 create/update 返回结构化 409；旧 Wave 快照不变 | 全角色可读公开配置；价格/写入 admin | 重名、角色脱敏、冻结快照、浏览器表单 | 已闭环 |
+| 模型能力与执行参数 | `capabilities`、`answer/judge/health_defaults`、Wave overrides | omitted/null 解析、能力校验、per-engine 不可变有效快照、请求参数/响应元数据台账 | 配置 admin；Wave analyst | 参数优先级、温度/输出上限、JSON mode、旧新比较与 Chrome | 已闭环 |
+| 普通 Provider 独立 Judge | `judge_engine_id`、`judge_mode` | 回答/Judge 分开发送，engine_config_id、usage、成本和报告分别归属 | Wave analyst；Demo/真实不混用 | 多引擎预估、worker 归属、同引擎兼容、Chrome，以及 Kimi 回答→DeepSeek Judge 单题 live | 已闭环；交叉模型单题 live 通过 |
 | 健康检查 | `POST /engines/{id}/health` | Search/Chat 进入统一调用台账；预算预留后释放 | admin；真实调用逐次确认 | 成功/失败/预算测试 | 本地已闭环；真实账号另见第 4 节 |
 | 项目/Wave/每日预算 | `services.budgets`、项目设置 | 已发生成本 + active reservation；按项目时区每日边界 | admin 配置 | 边界、并发预留、币种和浏览器 | 已闭环 |
 | 软预算超限 | Run/retry/health/schedule 统一入口 | 管理员逐次理由、预留和审计；调度无法自行确认 | admin 确认 | 服务测试与真实浏览器理由流程 | 已闭环 |
@@ -72,6 +74,7 @@
 | 文件 | 临时文件、0600 原子替换、大小/hash/PDF magic、项目导出内部 hash | 已闭环 |
 | 人工 Web | collection save/get/submit/fail 与 evidence upload/download/delete | 隔离 CLI 全链通过 |
 | 能力声明 | `capabilities` 返回注册表和 `live_provider_verified=false` | 不把命令覆盖写成 live 验收 |
+| Schema 与示例 | `schema` 读取 `/openapi.json` 并展开 EngineIn/WaveIn/CollectionDraftIn；`example` 提供无秘密请求示例 | 只读或纯本地，无业务写副作用；提交响应明确 Worker 下一步 |
 
 详细命令见 [cli.md](cli.md)。
 
@@ -80,14 +83,15 @@
 | 能力 | 当前状态 |
 |---|---|
 | DemoProvider | 完整离线闭环；健康检查也进入台账；不与真实指标混算 |
-| OpenAI-compatible 协议 | mock 覆盖空正文、截断、错误 usage 保留。**DeepSeek 已完成一次真实 Provider API smoke；完整真实 Wave/Run/Judge 未验证。** |
-| Kimi Search + Chat | Search Basic `text_query`、Search/Chat 分离和失败不降级均有 mock；**本轮未执行 Kimi live，外部账号验证未完成。** |
+| OpenAI-compatible 协议 | mock 覆盖空正文、截断、显式 null、JSON mode、think 分离和错误 usage 保留。Geo agent 的既有报告另记录 DeepSeek Flash 单题真实链与 MiniMax 真实结构化 Judge 补验；不是本轮自动化执行结果。 |
+| Kimi Search + Chat | Search Basic `text_query`、Search/Chat 分离、空结果零计费和失败不降级均有 mock；另经确认完成一次隔离单题 live，`kimi-k3.1-pro` 使用 `temperature=1,max_tokens=2048`，Search/Chat 各 1 次、5 条引用、Run done、有效样本 1；未做 live 失败路径或金额对账。 |
+| DeepSeek Search + Chat | 官方 query/count/need_content 协议、长查询、引用、Search/Chat 台账、空结果无 Chat 和计费语义均有 mock；另经确认完成一次隔离单题 live，Search/Chat 各 1 次、10 条引用、Run done、有效样本 1，实际返回模型 `deepseek-flash`；未做 live 失败路径、交叉 Judge 或金额对账。 |
 | 人工 Consumer Web 对话采集 | **已闭环（人工辅助）**。测试入口、草稿、截图、不可变提交、独立 Judge、报告和 CLI 已验证；不等于真实消费者平台 live 验收。 |
 | 自动 Consumer Web/App Collector | **不在范围**。不实现持久登录、DOM 自动提取、验证码处理/绕过、多平台爬虫或 App 自动化；API 观察不能描述为终端产品实际回答。 |
 | 厂商账单导入与对账 | **不在范围**。当前金额是实际 usage + 管理员价格规则的估算。 |
 | 多节点队列、高可用 | **不在范围**。当前为单节点 FastAPI + SQLite。 |
 | 自动向客户发送报告 | **不在范围**。仅人工登记发送记录。 |
-| 旧 v1 测试数据回迁 | **不在范围**。当前 schema 为 v3；旧测试数据已获准删除。 |
+| 旧 v1 测试数据回迁 | **不在范围**。当前 schema 为 v4；旧测试数据已获准删除。 |
 
 ## 6. 主要验收入口
 
@@ -95,6 +99,7 @@
 - `tests/browser_smoke.py`：八条工作流、报告 PDF、viewer/reviewer、移动导航和证据详情。
 - `tests/browser_governance.py`：结构化价格、软/硬预算、调度 blocked/恢复、告警历史、保留执行、手工工时、键盘 tabs 和移动溢出。
 - `tests/browser_manual_web.py`：真实 Chrome 人工目标/Wave/Run、草稿、PNG、不可变提交、离线 Judge、复核、正式 Run、报告 PDF、失败登记、只读角色和 1440/768/390。
+- `tests/browser_model_execution.py`：模型能力与默认参数、DeepSeek 离线配置、普通 Provider 独立 Judge、冻结协议、worker 归属及 1440/768/390。
 - `tests/test_cli.py`：全路由注册、确认、错误、文件、Demo 业务链和人工 Web 证据链。
 - `tests/stress_simulated.py`：仅 DemoProvider 的 2700 次模拟压力验收，不访问外部网络。
 - `scripts/geopulse_ctl.py golden-eval`：小型离线回归集，不代表生产 LLM 准确率。

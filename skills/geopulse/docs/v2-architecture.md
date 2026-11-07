@@ -1,8 +1,8 @@
-# GeoPulse v2.1 架构
+# GeoPulse v2.2 架构
 
 ## 1. 目标与边界
 
-GeoPulse v2.1 是单节点、多客户项目的 GEO 交付系统，重点是可复现测量、证据审计、严格比较和人工审批，而不是自动承诺优化效果。Provider API 与人工 Consumer Web 是独立测量目标；当前人工 Web 不包含自动 Collector、持久登录、DOM 自动提取、验证码处理或多平台爬虫。
+GeoPulse v2.2 是单节点、多客户项目的 GEO 交付系统，重点是可复现测量、证据审计、严格比较和人工审批，而不是自动承诺优化效果。Provider API 与人工 Consumer Web 是独立测量目标；当前人工 Web 不包含自动 Collector、持久登录、DOM 自动提取、验证码处理或多平台爬虫。
 
 保留以下部署约束：
 
@@ -33,7 +33,8 @@ Worker threads（默认 4）
 Provider API
   ├─ Demo（本地，无网络）
   ├─ OpenAI-compatible Chat（memory）
-  └─ Kimi Search Basic + Chat（search）
+  ├─ Kimi Search Basic + Chat（search）
+  └─ DeepSeek Search + Chat（search）
 
 Manual Web Run → awaiting_collection → 人工草稿 + SQLite 证据 BLOB
                → 不可变提交 → 独立 Judge → 同一 Observation / Report 链
@@ -50,13 +51,13 @@ Scheduler → 到期 Provider Wave → 幂等创建 Run → 同一个 SQLite 队
 |---|---|---|
 | Client / Project | 客户与项目边界 | 业务行保存 `client_id + project_id` |
 | User / Membership | 登录与项目角色 | 非全局管理员必须有项目 membership |
-| EngineConfig | Provider 或人工 Web 目标、口径、限流、成本规则 | DB 不保存明文 key；人工目标不保存账号或秘密 |
+| EngineConfig | Provider 或人工 Web 目标、口径、能力、执行默认值、限流、成本规则 | DB 不保存明文 key；人工目标不保存账号或秘密 |
 | BrandEntity | 主品牌、竞品、候选与消歧卡 | 版本不可变，confirmed 才进有效指标 |
 | PromptSet / PromptItem | 自然问法、canonical intent、分层与适用性 | 冻结后只能复制新版本 |
 | Wave | 一次业务测量及完整冻结协议 | 正式 Run 由管理员指定 |
 | Run | Wave 下的执行尝试 | `(wave_id, attempt_no)` 唯一 |
 | Answer | 一次 prompt×engine×round 原始回答 | 原文不覆盖；样本键唯一 |
-| CallAttempt | answer/judge/search 调用、usage、成本与错误 | 每次 attempt 独立追加 |
+| CallAttempt | answer/judge/search 调用、allowlisted 请求参数、响应元数据、usage、成本与错误 | 每次 attempt 独立追加；不记录 API Key 或推理正文 |
 | Observation | 某实体在某回答中的当前/历史判定 | revision 追加，不改原文 |
 | Citation | Provider 返回或人工实际看到的页面 URL | `origin` 分离；不伪造 URL；按 answer+URL+hash 去重 |
 | WebCollection | 人工草稿、实际页面、上下文、观察时间和提交事实 | 正式提交不可覆盖；失败不成为零提及 |
@@ -74,13 +75,15 @@ Scheduler → 到期 Provider Wave → 幂等创建 Run → 同一个 SQLite 队
 - prompt set ID/hash、prompt item IDs 和 canonical intent 分层权重；
 - 实体 IDs、实体版本 hash、竞品池 hash；
 - 引擎 ID/name/kind/model、memory/search、provider_api 或 consumer_web；
-- repeats、temperature、中性 system prompt、max tokens；
+- repeats，以及按回答引擎 ID 冻结的 `answer_execution` / `judge_execution` 有效参数；显式 null 与 omitted 在创建时解析完成；
 - language、market、judge version、有效样本定义；
 - 人工 Web 的 `collection_protocol`：产品入口、平台、surface、页面模式、联网/深度开关、会话、登录/账号类型、地区/语言、上下文清理和追问策略；
-- 独立 Judge 的公开 `judge_signature` 与内部执行快照；人工回答/Search 调用为 0；
+- 同引擎 Judge 或独立 Judge 的 `judge_mode`、公开 `judge_signature` 与内部执行快照；独立 Judge 可服务普通 Provider 或人工 Web，人工回答/Search 调用为 0；
 - 统计阈值、安全重试上限和是否启用全量 Judge。
 
-严格比较校验完整协议，并同时检查：
+参数优先级为：Wave 按引擎 answer/Judge 覆盖 → 旧 Wave 全局兼容输入 → 引擎 answer/Judge/health 默认值 → 内建兼容默认值。显式 null 是不发送，不等于继承。已知 `max_output_tokens`、temperature 支持和允许枚举在冻结/健康检查前校验；未知能力保持 unknown，不按模型名猜测。编辑引擎不会改写旧 Wave。
+
+严格比较先把旧 top-level 参数和新 per-engine map 归一化为有效执行协议，再校验完整协议，并同时检查：
 
 1. 两次正式 Run 的 intent×engine pair-key 完整度；
 2. 两次测量的有效样本率；
@@ -115,7 +118,7 @@ SQLite 单写者决定了这是有界单节点队列。不要把多个独立 Uvi
 
 证据不在原文时，系统尝试确定性回查并标为待复核；缺失实体不会伪装成 confirmed absence。负面推荐被降级，Judge 失败显式记录 rules fallback。Demo 始终使用明确标记的 demo-rules。
 
-人工 Web 默认选择同项目、已启用的独立 Judge。Demo Judge 只用于明确标记的离线测试；真实 Judge 的调用、usage、成本和 secret reference 与人工目标分离。显式关闭 Judge 时使用 rules fallback，仍需管理员仲裁后才能通过报告质量闸门。
+人工 Web 默认选择同项目、已启用的独立 Judge。普通 Provider 也可显式选择独立 Judge；未选择时保留各回答引擎兼任 Judge。Provider 独立 Judge 不能同时是本次回答引擎，真实回答与 Demo Judge 不混用。Judge 使用自己的冻结参数和 engine_config_id；Search 型 Judge 只调用结构化 Chat，不执行 Search。Demo Judge 只用于明确标记的离线测试；真实 Judge 的调用、usage、成本和 secret reference 与回答目标分离。显式关闭 Judge 时使用 rules fallback，仍需管理员仲裁后才能通过报告质量闸门。
 
 人工提交要求非空正文、相同 origin、与冻结协议一致的实际上下文、带 offset 且与 IANA 时区一致的时间，以及至少一张通过 bytes/hash/size/magic 校验的截图。人工引用只记录用户实际看到的 URL、标题和卡片文本，不自动抓取。附件下载仅 admin/analyst，reviewer/viewer 与跨项目 ID 均拒绝。
 
@@ -123,7 +126,7 @@ SQLite 单写者决定了这是有界单节点队列。不要把多个独立 Uvi
 
 ### OpenAI-compatible memory
 
-普通 Chat Completions。`finish_reason=length` 即使已有部分文本也标为截断失败；reasoning-only 内容不作为正式回答。
+普通 Chat Completions。`finish_reason=length` 即使已有部分文本也标为截断失败；reasoning-only 内容不作为正式回答。起始完整 `<think>…</think>` 只分离可见回答，未闭合或空可见后缀仍失败，推理文本不进入原文或调用台账。请求按有效配置发送或省略 temperature/max_tokens/system message；不支持 JSON response_format 时仍要求 Judge 输出 JSON，但不发送该能力字段。
 
 ### Kimi Search + Chat
 
@@ -138,6 +141,14 @@ Search 失败保留错误前缀；Chat 失败仍保留已成功的 Search operat
 
 这些结果不得标为 Kimi App、ChatGPT web 或其他消费端观察。
 
+### DeepSeek Search + Chat
+
+使用官方 [Search 协议](https://api-docs.deepseek.com/guides/search/)：`POST {base_url}/tools/search`，base URL 按现有约定包含 `/v1`，请求 `{query,count:10,need_content:false}`。解析 `results[]` 的 title/url/snippet/summary/site_name/date，校验 HTTP(S) URL 并去重，再单独调用 Chat。query 超过 128 个 Unicode 字符时确定性截断并记录 `query_truncated`；完整原始 Prompt 仍进入 Chat。本轮不实现 Fetch。
+
+Search HTTP 失败、空结果或没有可用资料不会调用 Chat 或降级 memory；失败/空结果操作记录 `search_calls=0,billable=false`。已成功 Search 后 Chat 失败仍保留 Search usage 和成本。Search/Chat 的 operation、usage、成本、延迟、request ID 和实际参数分别记录，价格仍由管理员规则提供，不硬编码厂商价格。
+
+这些结果不得标为 DeepSeek Web/App 或其他消费端观察。
+
 ### 人工 Consumer Web
 
 `manual_web + consumer_web` 是独立目标，不是 Provider adapter，`build_provider` 会明确拒绝。Web Wave 只能选择一个目标，不能和 Provider 或其他 Web 目标混合，也不能创建自动调度。
@@ -150,7 +161,7 @@ Search 失败保留错误前缀；Chat 失败仍保留已成功的 Search operat
 
 客户版和内部版来自同一个不可变 data snapshot。创建时保存版本、内容 SHA-256 和 draft 状态；审批事件单独追加。导出时用当前审批状态渲染展示外壳，不重写数据快照。
 
-- 客户版隐藏成本、内部原始样本和内部错误细节。
+- 客户版和 reviewer/viewer 快照隐藏成本、内部原始样本和内部错误细节，并递归移除 per-engine execution map 中的 system prompt。
 - 内部版包含原文、Judge、失败、成本和 revision。
 - 无正式 Run/无有效样本可保存待处理草稿，但发布闸门阻止审批。
 - 审批顺序：draft → data_checked → strategy_reviewed → client_approved → sent。

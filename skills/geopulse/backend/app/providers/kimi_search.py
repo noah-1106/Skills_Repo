@@ -17,12 +17,16 @@ class KimiSearchProvider(OpenAICompatProvider):
             data, search_latency, search_request_id = self._post("/tools/search", {"text_query": prompt})
         except ProviderError as error:
             error.kind = f"search_{error.kind}"
+            error.operations = [{"kind": "search", "status": "failed", "usage": {"search_calls": 0},
+                                 "billable": False, "error_type": error.kind, "error_detail": str(error)}]
             raise
         results = data.get("search_results")
         if not isinstance(results, list) or not results:
             raise ProviderError("Kimi 检索未返回来源；不会降级为记忆态", "search_no_results",
                                 operations=[{"kind": "search", "status": "failed", "latency_ms": search_latency,
-                                             "usage": {}, "request_id": search_request_id}])
+                                             "usage": {"search_calls": 0}, "billable": False,
+                                             "request_id": search_request_id, "error_type": "search_no_results",
+                                             "error_detail": "Kimi 检索未返回来源；不会降级为记忆态"}])
         citations = []
         seen_urls = set()
         for item in results:

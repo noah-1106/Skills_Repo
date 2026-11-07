@@ -170,7 +170,7 @@ def main():
                 first_tab.focus()
                 first_tab.press("ArrowRight")
                 page.get_by_role("tab", name=re.compile(r"^调度与告警")).wait_for()
-                page.wait_for_function("document.activeElement?.getAttribute('role') === 'tab'")
+                page.wait_for_function("() => document.activeElement?.getAttribute('role') === 'tab'")
                 assert page.evaluate("document.activeElement.getAttribute('role')") == "tab"
                 assert page.locator("[role=tabpanel]").count() == 1
                 page.set_viewport_size({"width": 390, "height": 844})

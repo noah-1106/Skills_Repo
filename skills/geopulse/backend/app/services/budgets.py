@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from .. import config
 from ..db import all_rows, dumps, loads, one, utc_now
 from .costs import quote, rule_for
+from .execution import resolve_execution
 
 
 def project_day(project: dict) -> tuple[str, str, str]:
@@ -36,7 +37,8 @@ def scale_estimate(estimate: dict, factor: float) -> dict:
 
 def estimate_health(engine: dict) -> dict:
     rule = rule_for(engine)
-    operations = [("answer", {"prompt_tokens": 40, "completion_tokens": 8})]
+    health = resolve_execution(engine, "health")
+    operations = [("answer", {"prompt_tokens": 40, "completion_tokens": health.get("max_tokens") or 8})]
     if engine.get("mode") == "search":
         operations.insert(0, ("search", {"search_calls": 1}))
     total = 0.0

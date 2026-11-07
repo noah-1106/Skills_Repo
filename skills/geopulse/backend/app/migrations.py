@@ -15,6 +15,7 @@ MIGRATIONS = {
     1: Path(__file__).parent / "migrations" / "001_v2.sql",
     2: Path(__file__).parent / "migrations" / "002_execution_governance.sql",
     3: Path(__file__).parent / "migrations" / "003_manual_consumer_web.sql",
+    4: Path(__file__).parent / "migrations" / "004_model_execution_search.sql",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -60,7 +61,7 @@ def _apply_migrations(version: int) -> None:
         digest = _checksum(sql)
         conn = connect()
         try:
-            if number == 3:
+            if number in {3, 4}:
                 # Table rebuild requires FK off before the transaction starts.
                 conn.execute("PRAGMA foreign_keys=OFF")
             script = (
@@ -69,7 +70,7 @@ def _apply_migrations(version: int) -> None:
                 + f"\nPRAGMA user_version={number};\nCOMMIT;"
             )
             conn.executescript(script)
-            if number == 3:
+            if number in {3, 4}:
                 conn.execute("PRAGMA foreign_keys=ON")
                 violations = conn.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:

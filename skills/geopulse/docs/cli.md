@@ -85,7 +85,24 @@ health           服务健康状态
 
 `capabilities` 返回服务健康、当前身份和完整注册表。`live_provider_verified=false` 是有意的：命令覆盖不等于真实 Provider、真实消费者平台或 Collector 已验收。
 
-## 4. 典型调用
+## 4. OpenAPI schema 与可填写示例
+
+```bash
+CTL='.venv/bin/python scripts/geopulse_ctl.py'
+
+$CTL schema engine
+$CTL schema wave
+$CTL schema collection-draft
+
+$CTL example engine
+$CTL example wave
+$CTL example manual-web-wave
+$CTL example collection-draft
+```
+
+`schema` 只读取服务的 `/openapi.json` 并展开对应 Pydantic component，不让远程 CLI 导入后端或复制 schema。`example` 返回 `spec`、`usage` 和 `notes`；把 `spec` 保存为 JSON 后替换实际 ID、模型、入口和观察事实。示例不包含 API Key，引擎秘密仍通过 `--secret-fd` 提供。两条命令都不会创建引擎、Wave、Run 或采集任务。
+
+## 5. 典型调用
 
 ```bash
 CTL='.venv/bin/python scripts/geopulse_ctl.py'
@@ -103,7 +120,7 @@ Shell 变量只缩短示例；也可以重复写完整解释器路径。`run wai
 
 `measure run --project 1 --spec wave.json` 是少量组合命令之一，按 `wave create → run create → 可选 wait/metrics` 编排。遇到真实调用确认或预算节点会立即停止并输出 `waiting_for_decision`，不会越过人工决定继续创建 Run。
 
-## 5. 真实调用与写操作确认
+## 6. 真实调用与写操作确认
 
 - 真实 `wave run` 未 `--confirm` 时只读取 Wave/estimate，不发送创建 Run 的 POST。
 - 非 demo 健康检查第一次返回 409 estimate；第二次必须同时带 `--confirm --estimate previous-estimate.json`。
@@ -111,7 +128,7 @@ Shell 变量只缩短示例；也可以重复写完整解释器路径。`run wai
 - 软预算仍需针对本次执行填写 `--budget-reason`；没有 `--force` 可绕过权限或硬预算。
 - `manual_web + Demo Judge` 不被当作真实付费调用；独立真实 Judge 仍需确认。
 
-## 6. 人工 Consumer Web 与证据
+## 7. 人工 Consumer Web 与证据
 
 ```bash
 $CTL collection save --project 1 --answer 31 --spec collection-draft.json
@@ -127,9 +144,9 @@ $CTL collection get --project 1 --answer 31
 $CTL evidence download --project 1 --attachment 8 --out /secure/path/page.png
 ```
 
-上传发送原始 bytes 和 SHA-256，不接受秘密字段。截图仅 PNG/JPEG/WebP，单附件最大 10MB，每个回答最多 12 个；raw HTML/text 只作为附件，不会内联执行。正式提交不可覆盖，失败样本不计为零提及。CLI 不会自动打开网页、保存登录会话、提取 DOM、处理验证码或运行爬虫。
+上传发送原始 bytes 和 SHA-256，不接受秘密字段。截图仅 PNG/JPEG/WebP，单附件最大 10MB，每个回答最多 12 个；raw HTML/text 只作为附件，不会内联执行。正式提交不可覆盖，失败样本不计为零提及。`collection submit --confirm` 返回 `answer_status=judging` 和 `worker_required=true`：必须启动 `run-worker`（或使用已启用应用内 worker 的服务）才会完成 Judge 和 Run，然后再执行 `run wait`。CLI 不会自动打开网页、保存登录会话、提取 DOM、处理验证码或运行爬虫。
 
-## 7. 文件与退出码
+## 8. 文件与退出码
 
 下载先写临时文件，校验非空、大小、响应 `X-Content-SHA256` 和 PDF magic；项目导出还重新计算内部 payload SHA-256。成功后以 0600 原子替换目标，默认不覆盖已有文件。
 

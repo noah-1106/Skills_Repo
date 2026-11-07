@@ -199,10 +199,10 @@ Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用�
 基线和复测都必须由管理员指定正式 Run。协议检查覆盖：
 
 - prompt set hash、实体版本、竞品池 hash；
-- engine signature、repeats、temperature、system prompt、max tokens；
-- language、market、judge version；
+- engine signature、repeats，以及归一化后的按回答引擎 `answer_execution` / `judge_execution` 有效参数；
+- language、market、judge version、`judge_mode`；
 - memory/search、measurement target、`use_judge`；
-- 人工 Web 的 collection protocol、独立 Judge signature 和 Judge 执行协议；
+- 人工 Web 的 collection protocol、独立 Judge signature；
 - 有效样本定义、stratum weights。
 
 配对键为 `engine_config_id:canonical_intent_id`：

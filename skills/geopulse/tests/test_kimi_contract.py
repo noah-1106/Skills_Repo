@@ -62,6 +62,8 @@ def test_kimi_never_falls_back_when_search_has_no_results(monkeypatch):
         provider().ask("question", {})
     assert caught.value.kind == "search_no_results"
     assert "不会降级" in str(caught.value)
+    operation = caught.value.operations[0]
+    assert operation["billable"] is False and operation["usage"]["search_calls"] == 0
 
 
 def test_successful_search_usage_survives_chat_failure():

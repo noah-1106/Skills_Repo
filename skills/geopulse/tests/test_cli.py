@@ -87,6 +87,34 @@ def test_spec_preserves_explicit_null_and_rejects_secrets(tmp_path):
     assert build_body(args, args.operation)["api_key"] == ""
 
 
+def test_openapi_schema_and_examples_have_no_business_writes():
+    from scripts.geopulse_cli.cli import example_command, schema_command
+
+    class FakeClient:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, path, **kwargs):
+            self.calls.append((method, path))
+            class Response:
+                def json(self):
+                    return app.openapi()
+            return Response()
+
+    fake = FakeClient()
+    args = build_parser().parse_args(["schema", "wave"])
+    result = schema_command(fake, args)
+    assert fake.calls == [("GET", "/openapi.json")]
+    assert result["model"] == "WaveIn" and "$ref" not in json.dumps(result)
+    assert "answer_overrides" in result["schema"]["properties"]
+    engine = schema_command(fake, build_parser().parse_args(["schema", "engine"]))
+    assert "deepseek_search" in json.dumps(engine)
+    example = example_command(build_parser().parse_args(["example", "collection-draft"]))
+    assert example["spec"]["status"] == "review_pending"
+    assert "run-worker" in example["notes"][-1]
+    assert "api_key" not in example_command(build_parser().parse_args(["example", "engine"]))["spec"]
+
+
 @pytest.fixture
 def cli_server(tmp_path):
     with socket.socket() as sock:
@@ -165,6 +193,8 @@ def test_cli_demo_delivery_chain(cli_server, tmp_path):
     projects = run("project", "list")
     project_id = projects["items"][0]["id"]
     assert run("capabilities")["authenticated"]
+    assert run("schema", "collection-draft")["model"] == "CollectionDraftIn"
+    assert "run-worker" in run("example", "manual-web-wave")["notes"][-1]
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"settings": {"prompt_quotas": {"brand": 0, "scene": 0, "compare": 0, "choice": 0}}}), encoding="utf-8")
     run("project", "settings", "--project", project_id, "--spec", settings)
@@ -327,6 +357,7 @@ def test_cli_manual_collection_and_evidence_chain(cli_server, tmp_path):
     submitted = run("collection", "submit", "--project", project_id, "--answer", answer_id,
                     "--spec", draft, "--confirm")
     assert submitted["answer_status"] == "judging"
+    assert submitted["worker_required"] and "run-worker" in submitted["next_step"]
     worker = Worker(1)
     worker.start()
     try:

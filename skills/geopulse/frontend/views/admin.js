@@ -1,4 +1,5 @@
 import { api } from "../api.js";
+import { executionFields } from "../execution.js";
 import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, tabs, tabPanel, label, formatDate, downloadJson, handleBudgetError } from "../components.js";
 
 export async function renderAdmin(root, ctx) {
@@ -62,7 +63,7 @@ function renderEngines(root, ctx, engines) {
       return [
         h("div", {}, h("div", { class: "cell-title" }, engine.name), h("span", { class: "cell-sub" }, `${engine.vendor} · ${manual ? "人工采集" : engine.has_api_key ? "密钥已配置" : engine.kind === "demo" ? "本地演示" : "缺少密钥"}`)),
         h("div", {}, manual ? engine.base_url : engine.model || "—", h("span", { class: "cell-sub" }, `${engine.kind} · ${manual ? "HTTPS 产品入口" : engine.base_url || "本地"}`)),
-        h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" ? h("span", { class: "cell-sub" }, "Search Basic + Chat；Search 失败不降级") : manual ? h("span", { class: "cell-sub" }, "由人工在页面观察并提交证据") : null),
+        h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" || engine.kind === "deepseek_search" ? h("span", { class: "cell-sub" }, "Search + Chat；Search 失败不降级") : manual ? h("span", { class: "cell-sub" }, "由人工在页面观察并提交证据") : null),
         manual ? h("div", {}, "不适用", h("span", { class: "cell-sub" }, "无 Provider 健康检查")) : h("div", {}, healthText(engine.health_status), engine.health_status ? h("span", { class: "cell-sub" }, "结果保存在当前配置，不改变历史 Run") : null),
         badge(engine.enabled ? "enabled" : "disabled", engine.enabled ? "success" : "neutral"),
         ctx.role === "admin" ? h("div", { class: "button-group" },
@@ -71,14 +72,14 @@ function renderEngines(root, ctx, engines) {
       ];
     })), [add]));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "连接与测量边界"), h("div", {},
-    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 检索使用 POST /v1/tools/search 的 text_query，再交给 Chat 回答。人工 Web 仅支持人工辅助采集；授权浏览器 Collector、持久登录、DOM 自动提取、验证码处理和多平台爬虫不在当前范围内。"))));
+    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 与 DeepSeek 分别使用各自的 Search 协议，再交给 Chat 回答；Search 失败不会降级为记忆态。人工 Web 仅支持人工辅助采集；授权浏览器 Collector、持久登录、DOM 自动提取、验证码处理和多平台爬虫不在当前范围内。"))));
 }
 
 function engineDialog(ctx, engine) {
   const rule = engine?.cost_rule || {};
   const name = input(engine?.name || "", { required: true });
   const vendor = input(engine?.vendor || "", { required: true, placeholder: "DeepSeek / Moonshot / GeoPulse" });
-  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }, { value: "manual_web", label: "人工 Consumer Web（网页观察）" }], engine?.kind || "openai_compat");
+  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "deepseek_search", label: "DeepSeek Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }, { value: "manual_web", label: "人工 Consumer Web（网页观察）" }], engine?.kind || "openai_compat");
   const mode = select([{ value: "memory", label: "memory · 记忆态" }, { value: "search", label: "search · 检索态" }], engine?.mode || "memory");
   const model = input(engine?.model || "", { placeholder: "按厂商账号可用模型填写" });
   const baseUrl = input(engine?.base_url || "", { placeholder: "https://platform.example.com/v1" });
@@ -94,7 +95,26 @@ function engineDialog(ctx, engine) {
   const judgeOutput = input(rule.judge_output_per_million ?? "", { type: "number", min: 0, step: "0.000001", placeholder: "沿用回答输出价" });
   const estimatedInput = input(rule.estimated_input_tokens ?? 1200, { type: "number", min: 1, step: 1 });
   const estimatedOutput = input(rule.estimated_output_tokens ?? 700, { type: "number", min: 1, step: 1 });
-  const searchField = field("Search 单次调用价", searchPrice, "Kimi Search 模式需要；未填写时成本明确标为未知");
+  const capabilities = engine?.capabilities || {};
+  const contextWindow = input(capabilities.context_window ?? "", { type: "number", min: 1, step: 1, placeholder: "未知" });
+  const maxOutput = input(capabilities.max_output_tokens ?? "", { type: "number", min: 1, step: 1, placeholder: "未知，不猜测" });
+  const allowedTemperatures = input((capabilities.allowed_temperatures || []).join(","), { placeholder: "如 1；留空表示未声明枚举限制" });
+  const capabilitySelect = (key) => select([{ value: "", label: "未知 / 未声明" }, { value: "true", label: "支持 / 是" }, { value: "false", label: "不支持 / 否" }],
+    capabilities[key] === true ? "true" : capabilities[key] === false ? "false" : "");
+  const supportsTemperature = capabilitySelect("supports_temperature");
+  const supportsJson = capabilitySelect("supports_json_mode");
+  const sharedReasoning = capabilitySelect("reasoning_tokens_share_output_budget");
+  const answerDefaults = executionFields(engine?.answer_defaults, "answer", "回答默认参数");
+  const judgeDefaults = executionFields(engine?.judge_defaults, "judge", "Judge 默认参数");
+  const healthDefaults = executionFields(engine?.health_defaults, "health", "健康检查默认参数");
+  const modelSettings = h("div", {},
+    h("details", { class: "advanced" }, h("summary", {}, "模型能力声明"), h("div", {},
+      h("p", { class: "muted small" }, "只填写厂商明确声明的能力。未知保持空白，不根据模型名或上下文窗口猜输出上限。"),
+      h("div", { class: "form-grid" }, field("上下文窗口", contextWindow), field("最大输出 tokens", maxOutput),
+        field("Temperature 支持", supportsTemperature), field("允许的 temperatures", allowedTemperatures),
+        field("JSON response_format", supportsJson), field("推理共享输出预算", sharedReasoning)))),
+    answerDefaults.node, judgeDefaults.node, healthDefaults.node);
+  const searchField = field("Search 单次调用价", searchPrice, "Search Driver 需要；未填写时成本明确标为未知");
   const modelField = field("模型 ID", model);
   const baseUrlField = field("Base URL", baseUrl, "生产环境强制 HTTPS");
   const apiKeyField = field("API Key", apiKey);
@@ -109,10 +129,11 @@ function engineDialog(ctx, engine) {
   const boundaryNote = h("p", { class: "muted small" });
   const syncKind = () => {
     const manual = kind.value === "manual_web";
-    mode.value = kind.value === "kimi_search" ? "search" : "memory";
+    const searchDriver = ["kimi_search", "deepseek_search"].includes(kind.value);
+    mode.value = manual ? (engine?.mode || "memory") : searchDriver ? "search" : "memory";
     mode.disabled = !manual;
-    searchField.hidden = kind.value !== "kimi_search";
-    [modelField, apiKeyField, timeoutField, rateField, pricing].forEach((node) => { node.hidden = manual; });
+    searchField.hidden = !searchDriver;
+    [modelField, apiKeyField, timeoutField, rateField, pricing, modelSettings].forEach((node) => { node.hidden = manual; });
     baseUrlField.querySelector("label").textContent = manual ? "HTTPS 产品入口" : "Base URL";
     baseUrl.placeholder = manual ? "https://consumer.example.com/chat" : "https://platform.example.com/v1";
     boundaryNote.textContent = manual
@@ -120,7 +141,7 @@ function engineDialog(ctx, engine) {
       : "当前 Provider 配置仅用于 provider_api。编辑价格不会改变已冻结 Wave 的预估与历史成本。";
   };
   const form = h("form", {}, h("div", { class: "form-grid" }, field("配置名称", name), field("厂商 / 产品", vendor), field("目标类型", kind), field("测量模式", mode),
-    modelField, baseUrlField, apiKeyField, timeoutField, rateField), enabled.node, pricing, boundaryNote,
+    modelField, baseUrlField, apiKeyField, timeoutField, rateField), enabled.node, modelSettings, pricing, boundaryNote,
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存测量目标")));
   if (engine?.kind === "manual_web") kind.disabled = true;
   else if (engine) kind.querySelector("option[value='manual_web']").disabled = true;
@@ -136,9 +157,21 @@ function engineDialog(ctx, engine) {
     });
     try {
       const manual = kind.value === "manual_web";
+      const optionalNumber = (control) => control.value === "" ? null : Number(control.value);
+      const boolValue = (control) => control.value === "" ? null : control.value === "true";
+      const allowed = allowedTemperatures.value.trim();
+      const capabilityValues = {
+        context_window: optionalNumber(contextWindow), max_output_tokens: optionalNumber(maxOutput),
+        supports_temperature: boolValue(supportsTemperature),
+        allowed_temperatures: allowed ? allowed.split(",").map((value) => Number(value.trim())) : null,
+        supports_json_mode: boolValue(supportsJson), reasoning_tokens_share_output_budget: boolValue(sharedReasoning),
+      };
+      if (capabilityValues.allowed_temperatures?.some((value) => !Number.isFinite(value))) throw new Error("允许的 temperatures 必须是逗号分隔的数值");
       const payload = { name: name.value, vendor: vendor.value, kind: kind.value, mode: mode.value, model: manual ? "" : model.value, base_url: baseUrl.value,
         api_key: manual ? "" : apiKey.value || (engine ? "__KEEP__" : ""), measurement_target: manual ? "consumer_web" : "provider_api",
-        timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: manual ? {} : costRule };
+        timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: manual ? {} : costRule,
+        capabilities: manual ? {} : capabilityValues, answer_defaults: manual ? {} : answerDefaults.read(),
+        judge_defaults: manual ? {} : judgeDefaults.read(), health_defaults: manual ? {} : healthDefaults.read() };
       await (engine ? api.put(`/api/projects/${ctx.project.id}/engines/${engine.id}`, payload) : api.post(`/api/projects/${ctx.project.id}/engines`, payload));
       modal.close(); toast("引擎配置已保存，密钥未回显"); ctx.refresh();
     } catch (error) { formError(form, error); }
@@ -146,12 +179,12 @@ function engineDialog(ctx, engine) {
 }
 
 function healthCheck(ctx, engine) {
-  const calls = engine.kind === "kimi_search" ? 2 : 1;
+  const calls = ["kimi_search", "deepseek_search"].includes(engine.kind) ? 2 : 1;
   const execute = async (reason = "") => {
     const result = await api.post(`/api/projects/${ctx.project.id}/engines/${engine.id}/health`, { confirm: engine.kind !== "demo", budget_confirmation_reason: reason });
     toast(`${label(result.status)} · ${result.detail}`, result.status !== "healthy"); ctx.refresh();
   };
-  confirmDialog(engine.kind === "demo" ? "检查演示引擎" : "确认真实外部调用", engine.kind === "demo" ? "演示健康检查只生成本地确定性回答，并写入统一调用台账。" : `将调用 ${engine.name}：预计 ${calls} 次外部请求（${engine.kind === "kimi_search" ? "Search + Chat" : "Chat"}），可能产生厂商费用。预算检查会在调用前执行。`, "确认并检查", async () => {
+  confirmDialog(engine.kind === "demo" ? "检查演示引擎" : "确认真实外部调用", engine.kind === "demo" ? "演示健康检查只生成本地确定性回答，并写入统一调用台账。" : `将调用 ${engine.name}：预计 ${calls} 次外部请求（${["kimi_search", "deepseek_search"].includes(engine.kind) ? "Search + Chat" : "Chat"}），可能产生厂商费用。预算检查会在调用前执行。`, "确认并检查", async () => {
     try { await execute(); } catch (error) { if (!handleBudgetError(error, execute)) throw error; }
   });
 }
