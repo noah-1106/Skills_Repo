@@ -14,6 +14,7 @@ from .db import connect, dumps, utc_now
 MIGRATIONS = {
     1: Path(__file__).parent / "migrations" / "001_v2.sql",
     2: Path(__file__).parent / "migrations" / "002_execution_governance.sql",
+    3: Path(__file__).parent / "migrations" / "003_manual_consumer_web.sql",
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 
@@ -59,12 +60,20 @@ def _apply_migrations(version: int) -> None:
         digest = _checksum(sql)
         conn = connect()
         try:
+            if number == 3:
+                # Table rebuild requires FK off before the transaction starts.
+                conn.execute("PRAGMA foreign_keys=OFF")
             script = (
                 "BEGIN IMMEDIATE;\n" + sql
                 + f"\nINSERT INTO schema_migrations(version,checksum,applied_at) VALUES({number},'{digest}','{utc_now()}');"
                 + f"\nPRAGMA user_version={number};\nCOMMIT;"
             )
             conn.executescript(script)
+            if number == 3:
+                conn.execute("PRAGMA foreign_keys=ON")
+                violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise MigrationRequired(f"schema v{number} 外键检查失败：{violations[:5]}")
         finally:
             conn.close()
 
@@ -116,6 +125,9 @@ def _check_sqlite(path: Path) -> int:
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise ValueError(f"SQLite integrity_check 失败：{integrity}")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise ValueError(f"SQLite foreign_key_check 失败：{violations[:5]}")
         return int(conn.execute("PRAGMA user_version").fetchone()[0])
     finally:
         conn.close()

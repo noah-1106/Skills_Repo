@@ -16,7 +16,6 @@ export async function renderPrompts(root, ctx) {
   if (!ctx.isCurrent()) return;
   const activeItems = current.items.filter((item) => item.status !== "rejected");
   const pending = activeItems.filter((item) => !["reviewed", "frozen"].includes(item.status)).length;
-  ctx.setProtocol({ promptSet: `${current.name} · v${current.version}`, engines: "尚未选择", n: undefined });
   const setSelector = select(sets.map((item) => ({ value: item.id, label: `v${item.version} · ${item.name} · ${label(item.status)}` })), current.id, { "aria-label": "选择问题集版本" });
   setSelector.addEventListener("change", () => ctx.navigate("prompts", { set: setSelector.value }));
   const actions = [h("button", { class: "button secondary", onClick: () => newSet(ctx) }, "新建草稿")];
@@ -33,8 +32,8 @@ export async function renderPrompts(root, ctx) {
   if (current.status === "frozen") actions.push(h("button", { class: "button", onClick: async () => { const copy = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/copy`, {}); toast("已复制为新草稿"); refreshSet(ctx, copy.id); } }, "复制为新版本"));
   clear(root);
   root.append(pageHead("问题集工作台", "把自然问法归入同一业务意图；冻结后文本、分层与适用性不再修改。", actions));
-  root.append(h("div", { class: "inline-panel emphasis" }, h("div", { class: "form-grid" }, field("当前版本", setSelector),
-    h("div", {}, h("h2", {}, current.status === "frozen" ? "这是不可变测量版本" : pending ? `还有 ${pending} 条待审核` : "题目已完成逐条审核"),
+  root.append(h("div", { class: "prompt-version-panel" }, h("div", { class: "prompt-version-grid" }, field("当前版本", setSelector),
+    h("div", { class: "prompt-version-summary" }, h("h2", {}, current.status === "frozen" ? "这是不可变测量版本" : pending ? `还有 ${pending} 条待审核` : "题目已完成逐条审核"),
       h("p", { class: "muted" }, current.status === "frozen" ? `冻结于 ${current.frozen_at || "—"} · 内容哈希 ${current.content_hash.slice(0, 12)}。如需修改，请复制新版本。`
         : current.status === "draft" ? "先添加候选题并进入审核。导入内容请避免包含客户机密；可选择自动脱敏邮箱和手机号。"
         : pending ? "管理员需要明确每条题目是否保留及其业务适用性。" : "可以冻结。冻结时会再次校验四维配额与未审核题目。"))),

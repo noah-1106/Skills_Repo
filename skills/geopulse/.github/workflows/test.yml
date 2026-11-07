@@ -1,0 +1,65 @@
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install locked dependencies
+        run: python -m pip install -r requirements-lock.txt
+      - name: Backend tests
+        run: python -m pytest -q
+      - name: Frontend ES-module syntax
+        run: |
+          for file in frontend/*.js frontend/views/*.js; do
+            node --input-type=module --check < "$file" || exit 1
+          done
+      - name: Vendor integrity
+        run: python scripts/check_vendor.py
+      - name: Dependency audit
+        run: pip-audit -r requirements-dev.txt
+      - name: Offline golden evaluation
+        run: python scripts/geopulse_ctl.py golden-eval --out test-results/golden-eval.json > /dev/null
+      - name: Simulated 2700-call stress acceptance
+        run: python tests/stress_simulated.py
+      - name: Install Chromium for PDF and browser acceptance
+        run: python -m playwright install --with-deps chromium
+      - name: Real-browser workflows and role checks
+        run: python tests/browser_smoke.py
+      - name: Real-browser execution governance checks
+        run: python tests/browser_governance.py
+      - name: Real-browser manual Consumer Web checks
+        run: python tests/browser_manual_web.py
+      - name: Upload acceptance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: geopulse-acceptance
+          path: test-results/
+          retention-days: 14
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -10,10 +10,14 @@ import { renderReports } from "./views/reports.js";
 import { renderAdmin } from "./views/admin.js";
 
 const routes = [
-  ["overview", "项目总览", renderOverview], ["prompts", "问题集", renderPrompts],
-  ["entities", "品牌实体", renderEntities], ["measure", "测量执行", renderMeasure],
-  ["review", "证据复核", renderReview], ["opportunities", "机会与行动", renderOpportunities],
-  ["reports", "对比与报告", renderReports], ["admin", "系统管理", renderAdmin],
+  ["overview", "项目总览", renderOverview, "overview", ""],
+  ["prompts", "问题集", renderPrompts, "prompts", "测量准备"],
+  ["entities", "品牌实体", renderEntities, "entities", ""],
+  ["measure", "测量执行", renderMeasure, "measure", "执行与复核"],
+  ["review", "证据复核", renderReview, "review", ""],
+  ["opportunities", "机会与行动", renderOpportunities, "opportunities", "客户交付"],
+  ["reports", "对比与报告", renderReports, "reports", ""],
+  ["admin", "系统管理", renderAdmin, "admin", "工作区管理"],
 ];
 const state = { user: null, projects: [], project: null, role: "viewer", renderId: 0, cleanups: [] };
 const workspace = document.getElementById("workspace");
@@ -29,12 +33,42 @@ export function navigate(name, params = {}) {
   location.hash = `#/${name}${search.toString() ? `?${search}` : ""}`;
 }
 
+function navIcon(name) {
+  const paths = {
+    brand: ["M4 17V7l8-4 8 4v10l-8 4z", "M8 12h2l1-3 2 6 1-3h2"],
+    overview: ["M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"],
+    prompts: ["M7 6h13M7 12h13M7 18h9M3 6h.01M3 12h.01M3 18h.01"],
+    entities: ["M12 3v4M12 17v4M3 12h4M17 12h4", "M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"],
+    measure: ["M3 12h4l2-6 4 12 2-6h6"],
+    review: ["M6 3h9l3 3v15H6zM14 3v4h4M9 12h6M9 16h4"],
+    opportunities: ["M6 3v18M6 7h7a4 4 0 0 1 4 4v10M14 4l3 3-3 3"],
+    reports: ["M4 20V10M10 20V4M16 20v-7M2 20h20"],
+    admin: ["M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M10 15v6"],
+  };
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.6");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  (paths[name] || paths.overview).forEach((data) => {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", data); svg.append(path);
+  });
+  return svg;
+}
+
 function renderNav(active) {
   const nav = document.getElementById("main-nav");
   clear(nav);
-  routes.forEach(([name, title]) => {
-    if (name === "admin") nav.append(h("div", { class: "nav-group-label" }, "工作区管理"));
-    nav.append(h("a", { href: `#/${name}`, class: name === active ? "active" : "", "aria-current": name === active ? "page" : null }, title));
+  routes.forEach(([name, title, , icon, group]) => {
+    if (group) nav.append(h("div", { class: "nav-group-label" }, group));
+    nav.append(h("a", {
+      href: `#/${name}`, class: name === active ? "active" : "",
+      "aria-current": name === active ? "page" : null,
+    }, h("span", { class: "nav-glyph", "aria-hidden": "true" }, navIcon(icon)), h("span", { class: "nav-label" }, title)));
   });
 }
 
@@ -48,9 +82,10 @@ function setProtocol(data = {}) {
     ["数据", data.demo ? "演示数据" : data.real ? "真实 API 数据" : ""],
   ].filter(([, value]) => value);
   if (!items.length) {
-    band.append(h("span", { class: "protocol-empty" }, "当前任务没有选定测量；选择 Wave 后可查看冻结口径。"));
+    band.hidden = true;
     return;
   }
+  band.hidden = false;
   band.append(h("strong", {}, "测量上下文"));
   items.filter(([name]) => ["引擎", "模式", "数据"].includes(name)).forEach(([name, value]) => band.append(h("span", { class: "protocol-item" }, `${name}：${value}`)));
   band.append(h("details", { class: "protocol-details" }, h("summary", {}, "查看完整冻结口径"),
@@ -67,6 +102,7 @@ async function renderRoute() {
   cleanup();
   const { name, params } = parseRoute();
   const route = routes.find(([routeName]) => routeName === name);
+  document.getElementById("app-shell").dataset.route = name;
   renderNav(name);
   document.title = `${route[1]} · ${state.project.name} · GeoPulse`;
   const renderId = ++state.renderId;
@@ -146,9 +182,11 @@ function renderLogin(message = "") {
   const form = h("form", { class: "login-form" }, h("h2", {}, "登录交付工作台"), h("p", { class: "muted" }, "使用当前部署环境中的账号继续。"),
     message ? h("div", { class: "form-error" }, message) : null,
     field("邮箱", email), field("密码", password), h("button", { class: "button", type: "submit" }, "登录"));
-  view.append(h("div", { class: "login-intro" }, h("div", {}, h("div", { class: "brand-mark" }, h("span", { class: "brand-symbol" }, "G"), h("strong", {}, "GeoPulse")),
-    h("h1", {}, "让每一次 GEO 结论，都能回到证据。"), h("p", {}, "面向客户交付的测量、复核、行动与报告工作流。")),
-    h("div", { class: "login-principles" }, h("span", {}, "冻结口径，再比较变化"), h("span", {}, "失败样本不等于零提及"), h("span", {}, "自动发现必须经管理员确认"))),
+  view.append(h("div", { class: "login-intro" }, h("div", {}, h("div", { class: "brand-mark" }, h("span", { class: "brand-symbol", "aria-hidden": "true" }, navIcon("brand")), h("strong", {}, "GeoPulse")),
+    h("h1", {}, "让每一次 GEO 结论，", h("br", {}), "都能回到证据。"), h("p", {}, "面向客户交付的测量、复核、行动与报告工作流。")),
+    h("div", { class: "login-principles" }, h("span", {}, "冻结口径，再比较变化"), h("span", {}, "失败样本不等于零提及"), h("span", {}, "自动发现必须经管理员确认")),
+    h("div", { class: "login-evidence", "aria-label": "从问题到报告的证据链" },
+      ["问题", "原文", "判定", "机会", "报告"].map((item) => h("span", {}, item)))),
     h("div", { class: "login-form-wrap" }, form));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -164,6 +202,7 @@ function renderLogin(message = "") {
 async function startApp() {
   await loadProjects();
   if (!state.project) { renderLogin("当前账号尚未分配项目，请联系管理员。"); return; }
+  closeNavigation();
   document.getElementById("login-view").hidden = true;
   document.getElementById("app-shell").hidden = false;
   renderProjectSwitcher();
@@ -185,7 +224,11 @@ const mobileNavigation = window.matchMedia("(max-width: 760px)");
 
 function closeNavigation(restoreFocus = false) {
   const sidebar = document.getElementById("sidebar");
+  if (mobileNavigation.matches && sidebar.contains(document.activeElement)) {
+    document.getElementById("menu-button").focus({ preventScroll: true });
+  }
   sidebar.classList.remove("open");
+  sidebar.inert = mobileNavigation.matches;
   document.getElementById("nav-backdrop").hidden = true;
   document.getElementById("menu-button").setAttribute("aria-expanded", "false");
   document.querySelector(".shell-main").inert = false;
@@ -196,6 +239,7 @@ document.getElementById("menu-button").addEventListener("click", () => {
   const sidebar = document.getElementById("sidebar");
   if (sidebar.classList.contains("open")) { closeNavigation(true); return; }
   sidebar.classList.add("open");
+  sidebar.inert = false;
   document.getElementById("nav-backdrop").hidden = false;
   document.getElementById("menu-button").setAttribute("aria-expanded", "true");
   document.querySelector(".shell-main").inert = true;
@@ -203,6 +247,14 @@ document.getElementById("menu-button").addEventListener("click", () => {
 });
 document.getElementById("nav-backdrop").addEventListener("click", () => closeNavigation(true));
 document.getElementById("main-nav").addEventListener("click", () => closeNavigation());
+document.getElementById("sidebar").addEventListener("keydown", (event) => {
+  const sidebar = document.getElementById("sidebar");
+  if (event.key !== "Tab" || !mobileNavigation.matches || !sidebar.classList.contains("open")) return;
+  const links = [...sidebar.querySelectorAll("a[href], button:not([disabled])")];
+  if (!links.length) return;
+  if (event.shiftKey && document.activeElement === links[0]) { event.preventDefault(); links.at(-1).focus(); }
+  else if (!event.shiftKey && document.activeElement === links.at(-1)) { event.preventDefault(); links[0].focus(); }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && document.getElementById("sidebar").classList.contains("open")) closeNavigation(true);
 });

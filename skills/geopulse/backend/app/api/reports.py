@@ -54,6 +54,8 @@ def get_report(project_id: int, report_id: int, request: Request):
             for wave in snapshot.get("waves", []):
                 wave["protocol"].pop("system_prompt", None)
                 wave.get("stats", {}).pop("budget", None)
+                (wave["protocol"].get("judge_execution") or {}).pop("system_prompt", None)
+                wave.pop("collection_evidence", None)
         result["snapshot"] = snapshot
         result["gates"] = reporting.release_gates(loads(report["data_snapshot_json"], {}))
         return result

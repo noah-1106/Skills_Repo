@@ -23,7 +23,7 @@ def project_day(project: dict) -> tuple[str, str, str]:
 
 def scale_estimate(estimate: dict, factor: float) -> dict:
     result = copy.deepcopy(estimate)
-    for key in ("answer_calls", "judge_calls", "search_calls", "total_external_calls", "max_external_calls",
+    for key in ("answer_calls", "judge_calls", "search_calls", "collection_tasks", "total_external_calls", "max_external_calls",
                 "estimated_input_tokens", "estimated_output_tokens", "max_estimated_input_tokens",
                 "max_estimated_output_tokens"):
         if key in result:

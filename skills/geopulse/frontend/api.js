@@ -20,11 +20,13 @@ async function parseResponse(response) {
 export async function request(path, options = {}) {
   const method = options.method || "GET";
   const headers = new Headers(options.headers || {});
-  if (options.body !== undefined && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
+  const rawBody = options.body instanceof FormData || options.body instanceof Blob ||
+    options.body instanceof ArrayBuffer || ArrayBuffer.isView(options.body) || typeof options.body === "string";
+  if (options.body !== undefined && !rawBody) headers.set("Content-Type", "application/json");
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken) headers.set("X-CSRF-Token", csrfToken);
   const response = await fetch(path, {
     ...options, method, headers, credentials: "same-origin",
-    body: options.body !== undefined && !(options.body instanceof FormData) ? JSON.stringify(options.body) : options.body,
+    body: options.body !== undefined && !rawBody ? JSON.stringify(options.body) : options.body,
   });
   const data = await parseResponse(response);
   if (!response.ok) {
@@ -39,6 +41,9 @@ export const api = {
   post: (path, body) => request(path, { method: "POST", body }),
   put: (path, body) => request(path, { method: "PUT", body }),
   delete: (path) => request(path, { method: "DELETE" }),
+  upload: (path, body, sha256) => request(path, { method: "POST", body, headers: {
+    "Content-Type": "application/octet-stream", "X-Content-SHA256": sha256,
+  } }),
 };
 
 export function query(params) {

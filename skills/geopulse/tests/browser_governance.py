@@ -14,15 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from browser_smoke import PASSWORD, seed_official_run, wait_server
+from browser_support import call
 
 OUTPUT = ROOT / "test-results" / "browser-governance"
-
-
-def call(page, method, path, body=None):
-    return page.evaluate("""async ({method, path, body}) => {
-      const {api} = await import('/static/api.js');
-      return api[method](path, ...(body === null ? [] : [body]));
-    }""", {"method": method, "path": path, "body": body})
 
 
 def save_settings(page):
@@ -70,14 +64,14 @@ def main():
                 page.locator("#main-nav a[href='#/admin']").click()
                 page.get_by_role("button", name="新增引擎", exact=True).click()
                 page.get_by_label("配置名称", exact=True).fill("预算测试引擎")
-                page.get_by_label("厂商", exact=True).fill("Offline Test")
+                page.get_by_label("厂商 / 产品", exact=True).fill("Offline Test")
                 page.get_by_label("模型 ID", exact=True).fill("budget-model")
                 page.get_by_label("Base URL", exact=True).fill("https://example.test/v1")
                 page.get_by_label("API Key", exact=True).fill("browser-offline-not-a-credential")
                 page.get_by_text("价格与调用预估", exact=True).click()
                 page.get_by_label("回答输入价 / 百万 tokens", exact=True).fill("10")
                 page.get_by_label("回答输出价 / 百万 tokens", exact=True).fill("20")
-                page.get_by_role("button", name="保存引擎配置", exact=True).click()
+                page.get_by_role("button", name="保存测量目标", exact=True).click()
                 page.get_by_text("引擎配置已保存，密钥未回显", exact=True).wait_for()
 
                 open_governance(page)
@@ -92,7 +86,10 @@ def main():
                 page.get_by_label("Wave 名称", exact=True).fill("浏览器预算 Wave")
                 page.locator(".check-field label").filter(has_text="预算测试引擎").click()
                 page.get_by_role("button", name="创建方案并查看预估", exact=True).click()
-                page.get_by_text("调用与费用预估", exact=True).wait_for()
+                try:
+                    page.get_by_text("调用与费用预估", exact=True).wait_for(timeout=5000)
+                except Exception as error:
+                    raise RuntimeError(f"Wave estimate diagnostics: {page.get_by_role('dialog').inner_text()}") from error
                 page.get_by_role("button", name="确认调用并创建 Run", exact=True).click()
                 page.get_by_role("dialog").filter(has_text="预算超限确认").wait_for()
                 page.get_by_label("超限执行理由", exact=True).fill("浏览器验收：管理员确认本次软预算超限")
@@ -173,12 +170,35 @@ def main():
                 first_tab.focus()
                 first_tab.press("ArrowRight")
                 page.get_by_role("tab", name=re.compile(r"^调度与告警")).wait_for()
+                page.wait_for_function("document.activeElement?.getAttribute('role') === 'tab'")
                 assert page.evaluate("document.activeElement.getAttribute('role')") == "tab"
                 assert page.locator("[role=tabpanel]").count() == 1
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.wait_for_timeout(250)
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=OUTPUT / "04-admin-mobile.png", full_page=True)
+                page.get_by_role("button", name="打开导航").click()
+                last_nav = page.locator("#main-nav a").last
+                last_nav.focus()
+                last_nav.press("Tab")
+                assert page.locator("#main-nav a").first.evaluate("node => document.activeElement === node")
+                page.keyboard.press("Shift+Tab")
+                assert last_nav.evaluate("node => document.activeElement === node")
+                page.keyboard.press("Escape")
+                page.set_viewport_size({"width": 1280, "height": 900})
+                page.wait_for_function("() => !document.getElementById('sidebar').inert")
+                page.emulate_media(reduced_motion="reduce")
+                page.get_by_role("tab", name="成本与运营", exact=True).click()
+                page.get_by_role("button", name="记录工时", exact=True).click()
+                durations = page.evaluate("""() => ['.drawer', '.toast', '.sidebar'].map(selector => {
+                  const style = getComputedStyle(document.querySelector(selector));
+                  return {selector, transition: style.transitionDuration, animation: style.animationDuration};
+                })""")
+                assert all(row["transition"] == "0s" and row["animation"] == "0s" for row in durations)
+                page.get_by_role("button", name="关闭对话框", exact=True).click()
+                page.locator("#main-nav a[href='#/measure']").click()
+                page.locator(".progress-bar").wait_for()
+                assert page.locator(".progress-bar").evaluate("node => getComputedStyle(node).transitionDuration") == "0s"
                 browser.close()
                 if errors:
                     raise AssertionError("Browser errors:\n" + "\n".join(errors))
@@ -192,6 +212,7 @@ def main():
     print(json.dumps({"status": "passed", "screenshots": str(OUTPUT), "checks": [
         "structured_engine_prices", "soft_budget_reason", "hard_budget_rejection", "schedule_blocked_resume",
         "alert_ack_history", "retention_preview_execute", "manual_work_log", "tabs_keyboard", "mobile_overflow",
+        "navigation_focus_trap", "reduced_motion",
     ]}, ensure_ascii=False))
 
 

@@ -15,14 +15,14 @@
   <div id="login-view" class="login-view" hidden></div>
   <div id="app-shell" class="app-shell" hidden>
     <aside id="sidebar" class="sidebar" aria-label="主导航">
-      <div class="brand-mark"><span class="brand-symbol" aria-hidden="true">G</span><div><strong>GeoPulse</strong><small>GEO 交付工作台</small></div></div>
+      <div class="brand-mark"><span class="brand-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17V7l8-4 8 4v10l-8 4z"/><path d="M8 12h2l1-3 2 6 1-3h2"/></svg></span><div><strong>GeoPulse</strong><small>GEO 交付工作台</small></div></div>
       <nav id="main-nav"></nav>
-      <div class="sidebar-foot"><span class="status-dot"></span>自托管 · 单机工作队列<small>数据与密钥保存在当前部署环境</small></div>
+      <div class="sidebar-foot"><span class="status-dot"></span><span>自托管</span><small>数据与密钥保存在当前部署环境</small></div>
     </aside>
     <button id="nav-backdrop" class="nav-backdrop" type="button" aria-label="关闭导航" tabindex="-1" hidden></button>
     <div class="shell-main">
       <header class="topbar">
-        <button id="menu-button" class="icon-button mobile-only" aria-label="打开导航" aria-expanded="false">☰</button>
+        <button id="menu-button" class="icon-button mobile-only" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false">☰</button>
         <div id="project-switcher" class="project-switcher"></div>
         <div class="topbar-spacer"></div>
         <details id="account-menu" class="account-menu">

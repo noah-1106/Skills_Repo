@@ -61,7 +61,7 @@ curl --fail http://127.0.0.1:8700/api/health
 5. 当前价格规则和最大可能费用；
 6. 超时结果不明时不自动重放。
 
-CI、pytest、浏览器 smoke/governance 和 2700 压力脚本均不执行真实付费调用。Kimi Search 合同 mock 通过不等于外部账号 live smoke 通过。DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行。后续真实 smoke 仍需独立预估和即时确认，既有确认不自动延伸到新调用。
+CI、pytest、浏览器 smoke/governance/manual-web 和 2700 压力脚本均不执行真实付费调用。Kimi Search 合同 mock 通过不等于外部账号 live smoke 通过。DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行。人工 Consumer Web 的测试入口和 Demo Judge 只验证离线产品闭环，不代表真实消费者平台 live 验收。后续真实 smoke 仍需独立预估和即时确认，既有确认不自动延伸到新调用。
 
 ## 4. 队列与调度
 
@@ -71,6 +71,7 @@ CI、pytest、浏览器 smoke/governance 和 2700 压力脚本均不执行真实
 - 已有原文的样本只恢复 Judge，不重复 Provider 请求。
 - 可安全重试错误最多按 Wave 协议自动重试；超时等结果不明错误需管理员重试。
 - 活跃 Run 未结束时，调度器不会为同一 Wave 重复入队。
+- 人工 Consumer Web 不能创建自动调度；只能由内部成员在测量页显式创建人工采集 Run，系统不会自动打开或操作网页。
 - 正式 Run 仍由管理员人工指定，调度不会自动替换。
 - 调度支持单次、每 7/14/28 天和自定义周期；可在 UI 编辑、暂停、恢复或取消。
 - 周期任务每次只执行一次到期测量，再推进到未来，不在停机后突发补跑全部过期周期。
@@ -104,7 +105,7 @@ CI、pytest、浏览器 smoke/governance 和 2700 压力脚本均不执行真实
 .venv/bin/python scripts/geopulse_ctl.py backup
 ```
 
-输出包含源路径、备份路径、schema 版本、UTC 时间和 SHA-256；同目录生成 `.manifest.json`。也可在“系统管理 → 设置与数据治理”创建备份并下载 manifest。
+输出包含源路径、备份路径、schema 版本、UTC 时间和 SHA-256；同目录生成 `.manifest.json`。也可在“系统管理 → 设置与数据治理”创建备份并下载 manifest。人工 Web 截图/raw evidence 以 SQLite BLOB 保存在同一数据库，因此一致性备份会同时包含正文、采集事实和证据字节；不要只导出 JSON 后把它当作数据库备份。
 
 建议：
 
@@ -156,7 +157,7 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py migrate
 ```
 
-当前 schema 为 v2，`PRAGMA user_version=2`。迁移按 `001_v2.sql`、`002_execution_governance.sql` 顺序执行并记录 checksum。程序拒绝静默打开未知旧版本或更新版本。未来迁移必须先备份；本版本不迁移旧 v1 回答数据。
+当前 schema 为 v3，`PRAGMA user_version=3`。迁移按 `001_v2.sql`、`002_execution_governance.sql`、`003_manual_consumer_web.sql` 顺序执行并记录 checksum，包含人工采集、附件 BLOB、raw-text hash 和 citation origin。程序拒绝静默打开未知旧版本或更新版本。迁移前会自动创建带 manifest 的一致性备份；本版本不迁移旧 v1 回答数据。
 
 ## 8. 项目导出与删除
 
@@ -165,13 +166,13 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py delete-project 1 --confirm '完整项目名'
 ```
 
-导出包含 schema、项目业务表、导出时间和 SHA-256，不含 secret store。删除会级联删除该项目业务数据；已有备份不会被自动删除，需按保留策略处理。UI 删除要求输入完整项目名。
+导出包含 schema、项目业务表、导出时间和 SHA-256，不含 secret store。导出合同为 `geopulse-project-v2`；人工 Web 附件 content 以 `{"encoding":"base64","data":"…"}` 表示，恢复或离线校验时必须按编码还原，不能把 base64 文本当作截图 bytes。删除会级联删除该项目业务数据；已有备份不会被自动删除，需按保留策略处理。UI 删除要求输入完整项目名。
 
 ## 9. 原文保留与清理
 
 `retention_days` 留空或为 0 时不自动清理。管理员显式配置后，维护任务按项目隔离处理到期原文；UI 可先预览 cutoff 和候选数，再确认执行并记录审计。
 
-清理只移除原始回答正文与敏感载荷，保留 `valid_sample`、observation、usage、状态和聚合所需元数据，并留下原文 tombstone。历史指标不会因正文为空而被改成零提及；清理后禁止新增依赖原文的 revision。旧报告快照保持不变，但包含已清理证据的新报告不能通过原文证据发布闸门。
+清理只移除原始回答正文与敏感载荷，保留 `valid_sample`、observation、usage、状态和聚合所需元数据，并留下原文 tombstone。人工 Web 同时清理草稿、人工引用卡片文本和附件 BLOB，保留 raw hash、附件 hash/size 与 tombstone，并返回 `attachment_purged_count`。历史指标不会因正文为空而被改成零提及；清理后禁止新增依赖原文的 revision。旧报告快照保持不变，但包含已清理证据的新报告不能通过原文或人工证据发布闸门。
 
 ## 10. 日志、成本与告警
 
@@ -208,4 +209,4 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 .venv/bin/python -m pytest -q
 ```
 
-CI 还执行前端 ESM、两套真实浏览器、黄金集、模拟压力和 secret scanning。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。
+CI 还执行前端 ESM、三套真实浏览器、黄金集、模拟压力和 secret scanning。HTTP 薄业务 CLI 的认证、确认和文件校验见 [cli.md](cli.md)。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。

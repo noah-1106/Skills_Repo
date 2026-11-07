@@ -35,6 +35,7 @@ def run_public(run: dict) -> dict:
 def wave_public(conn, wave: dict, role: str = "admin") -> dict:
     result = dict(wave)
     result.pop("engine_snapshot_json", None)
+    result.pop("judge_snapshot_json", None)
     result["protocol"] = loads(result.pop("protocol_json"), {})
     result["stats"] = loads(result.pop("stats_json"), {})
     result["estimate"] = estimate_wave(conn, wave)
@@ -76,7 +77,8 @@ def new_run(project_id: int, wave_id: int, request: Request, payload: RunCreateI
         context = require_admin(request, project_id)
     with connect() as conn:
         wave = scoped_object(conn, "waves", wave_id, context["project"])
-    run = create_run(context["project"], wave, context["user"]["id"], confirmation_reason=reason)
+    run = create_run(context["project"], wave, context["user"]["id"], confirmation_reason=reason,
+                     allow_manual=True)
     return {"run": run_public(run), "progress": {"total": 0, "finished": 0, "progress": 0}}
 
 
@@ -128,7 +130,8 @@ def cancel_run(project_id: int, run_id: int, request: Request):
         if run["status"] in ("done", "failed", "cancelled"):
             raise HTTPException(409, "该 run 已结束")
         conn.execute("UPDATE runs SET cancel_requested=1 WHERE id=?", (run_id,))
-        conn.execute("UPDATE answers SET status='cancelled',valid_sample=0,completed_at=? WHERE run_id=? AND status='queued'", (utc_now(), run_id))
+        conn.execute("UPDATE answers SET status='cancelled',valid_sample=0,completed_at=? WHERE run_id=? AND status IN ('queued','awaiting_collection')", (utc_now(), run_id))
+        conn.execute("UPDATE web_collections SET status='failed',failure_type='cancelled',failure_detail='Run 已取消，未形成有效样本',updated_at=? WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='cancelled')", (utc_now(), run_id))
         remaining = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('running','judging')", (run_id,))["count"]
         if not remaining:
             _finalize_run(conn, run_id)
@@ -146,6 +149,7 @@ def retry_run(project_id: int, run_id: int, request: Request, payload: RunCreate
         if run["status"] in ("queued", "running"):
             raise HTTPException(409, "运行中的 Run 不能重复派发重试")
         wave = scoped_object(conn, "waves", run["wave_id"], context["project"])
+        manual_web = loads(wave["protocol_json"], {}).get("measurement_target") == "consumer_web"
         count = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))["count"]
         if not count:
             raise HTTPException(409, "没有可重试的失败样本")
@@ -154,7 +158,15 @@ def retry_run(project_id: int, run_id: int, request: Request, payload: RunCreate
         decision = authorize_budget(conn, context["project"], estimate, wave=wave,
                                     actor=context["user"]["id"], confirmation_reason=reason,
                                     exclude_run_id=run_id)
-        conn.execute("UPDATE answers SET status='queued',valid_sample=NULL,error_type=NULL,error_detail=NULL WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))
+        conn.execute("UPDATE answers SET status=?,valid_sample=NULL,error_type=NULL,error_detail=NULL,completed_at=NULL WHERE run_id=? AND status IN ('failed','cancelled')",
+                     ("awaiting_collection" if manual_web else "queued", run_id))
+        if manual_web:
+            conn.execute("""UPDATE web_collections SET status='recollect_required',draft_text='',actual_url='',observed_mode='',
+                            observed_at='',timezone='',session_context_json='{}',retrieval_status='unknown',notes='',
+                            failure_type='',failure_detail='',citations_json='[]',submitted_at=NULL,updated_at=?
+                            WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='awaiting_collection')""",
+                         (utc_now(), run_id))
+            conn.execute("DELETE FROM answer_attachments WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='awaiting_collection')", (run_id,))
         conn.execute("UPDATE runs SET status='queued',cancel_requested=0,finished_at=NULL WHERE id=?", (run_id,))
         conn.execute("UPDATE waves SET status='running' WHERE id=?", (run["wave_id"],))
         reserve(conn, context["project"], decision, wave=wave, run_id=run_id, actor=context["user"]["id"])
@@ -188,7 +200,7 @@ def answers(project_id: int, run_id: int, request: Request, status: str = "", re
         if status:
             clauses.append("a.status=?")
             args.append(status)
-        rows = all_rows(conn, "SELECT a.id,a.run_id,a.prompt_item_id,a.engine_config_id,a.round_no,a.status,a.error_type,a.error_detail,a.model,a.created_at,a.completed_at,a.content_retained,a.content_purged_at,substr(a.raw_text,1,600) AS raw_text,p.text AS prompt_text,p.dimension FROM answers a JOIN prompt_items p ON p.id=a.prompt_item_id WHERE " + " AND ".join(clauses) + " ORDER BY a.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
+        rows = all_rows(conn, "SELECT a.id,a.run_id,a.prompt_item_id,a.engine_config_id,a.round_no,a.status,a.error_type,a.error_detail,a.model,a.created_at,a.completed_at,a.content_retained,a.content_purged_at,wc.status AS collection_status,wc.failure_type AS collection_failure_type,wc.retrieval_status,substr(a.raw_text,1,600) AS raw_text,p.text AS prompt_text,p.dimension FROM answers a JOIN prompt_items p ON p.id=a.prompt_item_id LEFT JOIN web_collections wc ON wc.answer_id=a.id WHERE " + " AND ".join(clauses) + " ORDER BY a.id DESC LIMIT ? OFFSET ?", [*args, limit, offset])
         for row in rows:
             engine = engines.get(int(row["engine_config_id"]), {})
             row["engine_name"] = engine.get("name") or str(row["engine_config_id"])
@@ -237,7 +249,7 @@ def answer_detail(project_id: int, answer_id: int, request: Request):
             observation["entity_card"] = loads(observation.pop("entity_card_json"), {})
         answer["observations"] = observations
         answer["citations"] = all_rows(conn, "SELECT * FROM citations WHERE answer_id=?", (answer_id,))
-        attempts = all_rows(conn, "SELECT id,kind,operation,attempt_no,status,request_id,model,latency_ms,usage_json,cost,currency,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
+        attempts = all_rows(conn, "SELECT id,kind,operation,attempt_no,status,engine_config_id,request_id,model,latency_ms,usage_json,cost,currency,error_type,error_detail,created_at FROM call_attempts WHERE answer_id=? ORDER BY id", (answer_id,))
         for attempt in attempts:
             attempt["usage"] = loads(attempt.pop("usage_json"), {})
             if context["role"] in ("reviewer", "viewer"):

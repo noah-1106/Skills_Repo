@@ -76,6 +76,24 @@ class EntityReviewIn(Model):
     role: Literal["primary", "competitor"] | None = None
 
 
+class CollectionProtocolIn(Model):
+    product_url: str
+    platform: str = "other"
+    surface: Literal["desktop_web", "mobile_web"] = "desktop_web"
+    page_mode: str = ""
+    networking: bool = False
+    deep_thinking: bool = False
+    deep_research: bool = False
+    session_mode: Literal["new", "continuous"] = "new"
+    login_state: Literal["anonymous", "logged_in"] = "anonymous"
+    account_type: str = ""
+    region: str = ""
+    language: str = "zh-CN"
+    context_clearing: str = "new_session"
+    follow_up_policy: str = "none"
+    protocol_version: Literal["manual-web-v1"] = "manual-web-v1"
+
+
 class WaveIn(Model):
     prompt_set_id: int
     label: str
@@ -87,6 +105,8 @@ class WaveIn(Model):
     use_judge: bool = True
     anchor_at: str | None = None
     stats: dict[str, Any] = {}
+    collection_protocol: CollectionProtocolIn | None = None
+    judge_engine_id: int | None = None
 
 
 class RunCreateIn(Model):
@@ -139,7 +159,7 @@ class ReportIn(Model):
 class EngineIn(Model):
     name: str
     vendor: str
-    kind: Literal["demo", "openai_compat", "kimi_search"]
+    kind: Literal["demo", "openai_compat", "kimi_search", "manual_web"]
     model: str = ""
     base_url: str = ""
     api_key: str = ""
@@ -196,3 +216,28 @@ class WorkLogIn(Model):
     kind: str
     note: str = ""
     work_date: str | None = None
+
+
+class ManualCitationIn(Model):
+    url: str
+    title: str = ""
+    text: str = ""
+
+
+class CollectionDraftIn(Model):
+    draft_text: str = Field(default="", max_length=2_000_000)
+    actual_url: str = ""
+    observed_mode: str = ""
+    observed_at: str = ""
+    timezone: str = ""
+    session_context: dict[str, Any] = {}
+    retrieval_status: Literal["unknown", "on", "off", "unavailable"] = "unknown"
+    notes: str = Field(default="", max_length=20_000)
+    citations: list[ManualCitationIn] = []
+    status: Literal["collecting", "review_pending"] = "collecting"
+
+
+class CollectionFailureIn(Model):
+    failure_type: Literal["captcha", "login_expired", "empty", "truncated", "error_page", "stream_interrupted", "other"]
+    failure_detail: str = Field(min_length=1, max_length=20_000)
+    notes: str = ""

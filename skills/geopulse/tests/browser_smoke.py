@@ -15,6 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from browser_support import ReportsPage, call
+
 OUTPUT = ROOT / "test-results" / "browser"
 PASSWORD = "test-browser-password"
 
@@ -78,7 +80,8 @@ def main() -> None:
                "GEOPULSE_EXPORT_DIR": str(temp / "exports"), "GEOPULSE_ADMIN_EMAIL": "admin@browser.local",
                "GEOPULSE_ADMIN_PASSWORD": PASSWORD, "GEOPULSE_DISABLE_WORKER": "1", "GEOPULSE_PORT": str(port)}
         os.environ.update({key: value for key, value in env.items() if key.startswith("GEOPULSE_")})
-        seed_official_run()
+        waves = seed_official_run()
+        latest_official_wave, latest_official_run = waves[-1]
         from backend.app.migrations import SCHEMA_VERSION
         log = (temp / "server.log").open("w", encoding="utf-8")
         process = subprocess.Popen([sys.executable, str(ROOT / "run_test_server.py")], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -100,17 +103,66 @@ def main() -> None:
                 if not page.locator(".login-form").count():
                     modules = await_modules = page.evaluate("""async () => { const out={}; for (const name of ['components','api','app']) { try { await import(`/static/${name}.js`); out[name]='ok'; } catch(e) { out[name]=e.stack || e.message; } } for (const name of ['overview','prompts','entities','measure','review','opportunities','reports','admin']) { try { await import(`/static/views/${name}.js`); out[name]='ok'; } catch(e) { out[name]=e.stack || e.message; } } return out; }""")
                     raise RuntimeError(f"Browser startup diagnostics: {errors}; modules={modules}; body={page.locator('body').inner_text()}")
+                page.screenshot(path=OUTPUT / "00-login-desktop.png", full_page=True)
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.screenshot(path=OUTPUT / "00-login-mobile.png", full_page=True)
+                page.set_viewport_size({"width": 1440, "height": 1000})
                 page.get_by_label("邮箱").fill("admin@browser.local")
                 page.get_by_label("密码").fill(PASSWORD)
                 page.get_by_role("button", name="登录", exact=True).click()
                 page.get_by_text("项目总览", exact=True).first.wait_for()
                 page.wait_for_selector(".stage-panel")
                 page.screenshot(path=OUTPUT / "01-overview-desktop.png", full_page=True)
+                page.set_viewport_size({"width": 2560, "height": 1440})
+                page.wait_for_timeout(150)
+                wide_edges = page.evaluate("""() => {
+                  const workspace = document.getElementById('workspace');
+                  const head = document.querySelector('.page-head').getBoundingClientRect();
+                  const gutter = parseFloat(getComputedStyle(workspace).paddingLeft);
+                  const topbarGutter = parseFloat(getComputedStyle(document.querySelector('.topbar')).paddingLeft);
+                  return {left: head.left, right: head.right, contentWidth: head.width, gutter, topbarGutter,
+                    navWidth: document.getElementById('sidebar').getBoundingClientRect().width,
+                    width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth};
+                }""")
+                assert wide_edges["navWidth"] == 208
+                assert abs(wide_edges["left"] - (wide_edges["navWidth"] + wide_edges["gutter"])) < 1
+                assert abs(wide_edges["right"] - (wide_edges["width"] - wide_edges["gutter"])) < 1
+                assert wide_edges["contentWidth"] <= 1441
+                assert wide_edges["topbarGutter"] == wide_edges["gutter"] and not wide_edges["overflow"]
+                page.locator("#workspace").focus()
+                assert page.locator("#workspace").evaluate("node => getComputedStyle(node).outlineStyle") == "none"
+                page.screenshot(path=OUTPUT / "01b-overview-wide.png", full_page=True)
+                page.set_viewport_size({"width": 1440, "height": 1000})
+                page.wait_for_timeout(100)
+                wilson = page.evaluate("""async () => {
+                    const { metric } = await import('/static/components.js');
+                    const regular = metric('常规样本', { value: 45, ci_low: 35, ci_high: 55, hits: 45, n: 100, limited: false });
+                    const limited = metric('小样本', { value: 37.5, ci_low: 13.7, ci_high: 69.4, hits: 3, n: 8, limited: true });
+                    const empty = metric('空样本', { value: null, ci_low: null, ci_high: null, hits: 0, n: 0, limited: true });
+                    const missing = metric('缺失区间', { value: 20, ci_low: null, ci_high: 50, hits: 20, n: 100, limited: false });
+                    return {
+                        regularValue: regular.querySelector('.metric-value').textContent,
+                        regularTrack: regular.querySelector('.wilson-track')?.getAttribute('style') || '',
+                        limitedValue: limited.querySelector('.metric-value').textContent,
+                        limitedText: limited.textContent,
+                        invalidTracks: [empty, missing].filter((node) => node.querySelector('.wilson-track')).length,
+                    };
+                }""")
+                assert wilson["regularValue"] == "45%"
+                assert "35%" in wilson["regularTrack"] and "20%" in wilson["regularTrack"]
+                assert wilson["limitedValue"] == "3/8" and "小样本仅看方向" in wilson["limitedText"]
+                assert wilson["invalidTracks"] == 0
                 errors.clear()  # initial /auth/me 401 is the expected logged-out bootstrap
 
                 page.locator("#main-nav a[href='#/prompts']").click()
                 page.get_by_role("button", name="新建草稿", exact=True).click()
-                page.get_by_label("问题集名称").fill("浏览器新问题集")
+                name_input = page.get_by_label("问题集名称")
+                page.wait_for_timeout(100)
+                name_input.focus()
+                page.wait_for_timeout(150)
+                input_style = name_input.evaluate("node => { const style = getComputedStyle(node); return {height: node.getBoundingClientRect().height, radius: style.borderRadius, border: style.borderColor, outline: style.outlineColor, fontSize: style.fontSize}; }")
+                assert input_style == {"height": 42, "radius": "6px", "border": "rgb(0, 116, 123)", "outline": "rgb(0, 116, 123)", "fontSize": "14px"}, input_style
+                name_input.fill("浏览器新问题集")
                 page.get_by_role("button", name="创建草稿", exact=True).click()
                 page.get_by_role("button", name="生成候选题", exact=True).wait_for()
                 page.get_by_role("button", name="生成候选题", exact=True).click()
@@ -122,6 +174,30 @@ def main() -> None:
                 page.locator(".table-wrap .table-link").first.click()
                 page.get_by_role("dialog").get_by_text("Canonical intent", exact=True).wait_for()
                 page.get_by_role("button", name="关闭对话框", exact=True).click()
+
+                version_select = page.get_by_label("选择问题集版本", exact=True)
+                assert version_select.evaluate("node => node.tagName") == "SELECT"
+                select_style = version_select.evaluate("node => { const style = getComputedStyle(node); return {appearance: style.appearance, arrow: style.backgroundImage, radius: style.borderRadius, height: node.getBoundingClientRect().height}; }")
+                assert select_style["appearance"] == "none" and "data:image/svg+xml" in select_style["arrow"]
+                assert select_style["radius"] == "6px" and select_style["height"] == 42
+                version_select.evaluate("node => { node.disabled = true; }")
+                page.wait_for_timeout(150)
+                disabled_style = version_select.evaluate("node => { const style = getComputedStyle(node); return {background: style.backgroundColor, cursor: style.cursor, opacity: style.opacity}; }")
+                assert disabled_style == {"background": "rgb(237, 243, 244)", "cursor": "not-allowed", "opacity": "1"}
+                version_select.evaluate("node => { node.disabled = false; node.setAttribute('aria-invalid', 'true'); }")
+                page.wait_for_timeout(150)
+                assert version_select.evaluate("node => getComputedStyle(node).borderColor") == "rgb(158, 54, 66)"
+                version_select.evaluate("node => node.removeAttribute('aria-invalid')")
+                version_select.hover()
+                page.wait_for_timeout(150)
+                assert version_select.evaluate("node => getComputedStyle(node).borderColor") == "rgb(64, 84, 92)"
+                draft_set_id = version_select.input_value()
+                frozen_set_id = version_select.locator("option").evaluate_all("nodes => nodes.find(node => node.textContent.includes('已冻结')).value")
+                version_select.select_option(frozen_set_id)
+                page.get_by_role("heading", name="这是不可变测量版本", exact=True).wait_for()
+                page.screenshot(path=OUTPUT / "02b-prompt-frozen.png", full_page=True)
+                page.get_by_label("选择问题集版本", exact=True).select_option(draft_set_id)
+                page.get_by_role("heading", name="还有 16 条待审核", exact=True).wait_for()
 
                 page.locator("#main-nav a[href='#/entities']").click()
                 page.get_by_role("button", name="新增实体", exact=True).click()
@@ -140,11 +216,24 @@ def main() -> None:
                 page.locator("#main-nav a[href='#/measure']").click()
                 page.get_by_text("浏览器验收基线", exact=True).first.wait_for()
                 page.wait_for_selector(".metric-strip")
+                page.locator(".run-history summary").click()
+                page.locator(".run-history .table-link").first.click()
+                page.wait_for_function("location.hash.includes('wave=') && location.hash.includes('run=')")
+                page.wait_for_selector(".run-focus")
+                assert page.locator(".list-rail .list-item[aria-current='location']").count() == 1
+                measure_deep_link = page.url
+                page.reload(wait_until="networkidle")
+                page.wait_for_selector(".run-focus")
+                assert page.url == measure_deep_link
                 page.screenshot(path=OUTPUT / "04-measure-desktop.png", full_page=True)
 
                 page.locator("#main-nav a[href='#/review']").click()
                 page.get_by_label("复核状态", exact=True).select_option("all")
                 page.wait_for_selector(".raw-answer")
+                assert page.locator(".raw-answer").get_attribute("tabindex") == "0"
+                assert page.locator(".raw-answer").get_attribute("role") == "region"
+                assert page.locator(".raw-answer").get_attribute("aria-label") == "原始回答全文"
+                assert page.locator(".evidence-browser .list-item[aria-current='location']").count() == 1
                 page.screenshot(path=OUTPUT / "05-review-desktop.png", full_page=True)
                 raw_answer = page.locator(".raw-answer").inner_text()
                 page.get_by_role("button", name="新增人工修订", exact=True).nth(0).click()
@@ -211,20 +300,37 @@ def main() -> None:
                 assert page.get_by_text("持续提及", exact=True).count() > 0
                 assert page.get_by_role("columnheader", name="相对变化", exact=True).count() == 0
                 page.screenshot(path=OUTPUT / "06a-comparison-desktop.png", full_page=True)
-                page.get_by_role("tab", name="报告交付 (0)", exact=True).click()
-                page.get_by_role("button", name="创建报告快照", exact=True).click()
-                page.get_by_role("button", name="创建不可变快照", exact=True).click()
-                page.get_by_text("报告 v1 · 草稿", exact=True).wait_for()
+                source_wave = call(page, "get", f"/api/projects/1/waves/{latest_official_wave}")
+                unexecuted = call(page, "post", "/api/projects/1/waves", {
+                    "prompt_set_id": source_wave["protocol"]["prompt_set_id"],
+                    "label": source_wave["label"],
+                    "engine_ids": source_wave["protocol"]["engine_ids"],
+                    "repeats": source_wave["protocol"]["repeats"],
+                    "use_judge": source_wave["protocol"]["use_judge"],
+                })
+                assert unexecuted["id"] > latest_official_wave and not unexecuted["official_run_id"]
+                reports_page = ReportsPage(page)
+                reports_page.open_delivery(wave_id=latest_official_wave)
+                report = reports_page.create_snapshot(latest_official_wave)
+                report_id = report["id"]
+                page.get_by_text(f"报告 v{report['version']} · 草稿", exact=True).wait_for()
+                report_detail = call(page, "get", f"/api/projects/1/reports/{report_id}")
+                assert report_detail["snapshot"]["waves"][-1]["wave"]["id"] == latest_official_wave
+                assert report_detail["snapshot"]["waves"][-1]["run"]["id"] == latest_official_run
+                from backend.app.db import connect, loads, one
+                with connect() as conn:
+                    stored_report = one(conn, "SELECT wave_ids_json FROM reports WHERE id=?", (report_id,))
+                assert loads(stored_report["wave_ids_json"], []) == [latest_official_wave]
                 for label in ("推进到数据已核验", "推进到策略已复核", "推进到客户版已批准"):
                     page.get_by_role("button", name=label, exact=True).click()
                     page.get_by_role("button", name="确认推进", exact=True).click()
                     page.wait_for_timeout(300)
-                page.get_by_text("报告 v1 · 客户版已批准", exact=True).wait_for()
-                pdf = page.request.get(f"{base}/api/projects/1/reports/1/export?variant=client&format=pdf")
+                page.get_by_text(f"报告 v{report['version']} · 客户版已批准", exact=True).wait_for()
+                pdf = page.request.get(f"{base}/api/projects/1/reports/{report_id}/export?variant=client&format=pdf")
                 assert pdf.status == 200, pdf.text()
                 assert pdf.body().startswith(b"%PDF")
                 (OUTPUT / "client-report.pdf").write_bytes(pdf.body())
-                report_html = page.request.get(f"{base}/api/projects/1/reports/1/export?variant=client&format=html")
+                report_html = page.request.get(f"{base}/api/projects/1/reports/{report_id}/export?variant=client&format=html")
                 assert report_html.status == 200, report_html.text()
                 report_text = report_html.text()
                 assert "选购词" in report_text and "客户已确认适用" in report_text and "第 3 步" in report_text
@@ -234,9 +340,9 @@ def main() -> None:
 
                 page.locator("#main-nav a[href='#/admin']").click()
                 page.wait_for_timeout(700)
-                if not page.get_by_text("引擎配置", exact=True).count():
+                if not page.get_by_text("测量目标配置", exact=True).count():
                     raise RuntimeError(f"Admin diagnostics: {errors}; body={page.locator('body').inner_text()}")
-                page.get_by_text("引擎配置", exact=True).wait_for()
+                page.get_by_text("测量目标配置", exact=True).wait_for()
                 page.screenshot(path=OUTPUT / "07-admin-desktop.png", full_page=True)
                 page.get_by_role("tab", name=re.compile(r"^调度与告警")).click()
                 page.get_by_text("Wave 调度", exact=True).wait_for()
@@ -266,6 +372,24 @@ def main() -> None:
                 page.get_by_label("业务品类", exact=True).fill("隔离测试")
                 page.get_by_role("button", name="创建项目", exact=True).click()
                 page.get_by_text("品牌实体工作台", exact=True).wait_for()
+                page.locator("#main-nav a[href='#/overview']").click()
+                page.locator(".baseline-checklist").wait_for()
+                assert page.locator("#protocol-band").is_hidden()
+                assert page.get_by_role("heading", name="最近 wave", exact=True).count() == 0
+                assert page.get_by_text("尚无可解读的正式数据", exact=True).count() == 0
+                assert page.get_by_role("link", name="检查品牌实体", exact=True).count() == 1
+                assert page.get_by_role("link", name="测量工作台", exact=True).count() == 0
+                page.wait_for_function("() => { const toast = document.getElementById('toast'); return !toast.classList.contains('show') && getComputedStyle(toast).opacity === '0'; }")
+                empty_style = page.locator(".stage-panel.empty-flow").evaluate("node => { const style = getComputedStyle(node); return {background: style.backgroundColor, border: style.borderTopWidth, padding: style.padding}; }")
+                assert empty_style == {"background": "rgba(0, 0, 0, 0)", "border": "0px", "padding": "0px"}
+                assert page.locator(".baseline-checklist li[aria-current='step']").count() == 1
+                page.screenshot(path=OUTPUT / "01c-overview-empty.png", full_page=True)
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.wait_for_timeout(150)
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(path=OUTPUT / "01d-overview-empty-mobile.png", full_page=True)
+                page.set_viewport_size({"width": 1440, "height": 1000})
+                page.wait_for_timeout(100)
                 page.locator("#main-nav a[href='#/admin']").click()
                 page.get_by_role("tab", name="设置与数据治理").click()
                 page.get_by_text("危险操作：删除当前项目", exact=True).click()
@@ -286,15 +410,29 @@ def main() -> None:
                     ("measure", "#/measure", "测量执行"),
                     ("opportunities", "#/opportunities?tab=closed", "机会与行动"),
                     ("review", "#/review?review=all", "证据复核"),
-                    ("reports", "#/reports?tab=delivery&report=1", "对比与报告"),
+                    ("reports", f"#/reports?tab=delivery&report={report_id}", "对比与报告"),
                     ("admin", "#/admin?tab=engines", "系统管理"),
                 ]
+                page.set_viewport_size({"width": 1280, "height": 900})
                 for name, route, heading in visual_routes:
                     page.evaluate("route => { location.hash = route; }", route)
                     page.get_by_role("heading", name=heading, exact=True).wait_for()
                     page.wait_for_timeout(200)
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"1280 overflow: {name}"
+                    if name == "prompts":
+                        assert page.locator("#protocol-band").is_hidden()
                     page.screenshot(path=OUTPUT / f"11-{name}-1280.png", full_page=True)
+
+                for width, height in ((1440, 1000), (2560, 1440), (1024, 768), (768, 1024)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    for name, route, heading in visual_routes:
+                        page.evaluate("route => { location.hash = route; }", route)
+                        page.get_by_role("heading", name=heading, exact=True).wait_for()
+                        page.wait_for_timeout(200)
+                        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"{width} overflow: {name}"
+                        if width == 768 and name == "prompts":
+                            assert page.get_by_role("heading", name=heading, exact=True).bounding_box()["width"] >= 200, "Tablet page title is compressed by actions"
+                        page.screenshot(path=OUTPUT / f"14-{name}-{width}.png", full_page=True)
 
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.locator("#main-nav a[href='#/overview']").evaluate("node => node.click()")
@@ -305,19 +443,31 @@ def main() -> None:
                   return !sidebar.classList.contains('open') && Math.abs(transform.m41 + sidebar.offsetWidth) < 1;
                 }""")
                 assert page.locator("#menu-button").get_attribute("aria-expanded") == "false"
+                assert page.locator("#sidebar").evaluate("node => node.inert")
+                assert page.locator("#main-nav a").first.evaluate("node => { node.focus(); return document.activeElement !== node; }")
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=OUTPUT / "08-overview-mobile.png", full_page=True)
                 page.get_by_role("button", name="打开导航").click()
-                assert page.locator("#sidebar").evaluate("node => node.classList.contains('open')")
+                assert page.locator("#sidebar").evaluate("node => node.classList.contains('open') && !node.inert")
                 assert page.locator(".shell-main").evaluate("node => node.inert")
                 page.get_by_role("button", name="关闭导航", exact=True).click()
                 page.wait_for_function("!document.getElementById('sidebar').classList.contains('open')")
+                assert page.locator("#sidebar").evaluate("node => node.inert")
                 assert not page.locator(".shell-main").evaluate("node => node.inert")
+                page.get_by_role("button", name="打开导航").click()
+                page.keyboard.press("Escape")
+                assert page.locator("#menu-button").evaluate("node => document.activeElement === node")
                 page.get_by_role("button", name="打开导航").click()
                 page.locator("#main-nav a[href='#/review']").click()
                 page.get_by_label("复核状态", exact=True).select_option("all")
+                page.get_by_label("回答状态", exact=True).select_option("succeeded")
                 page.locator(".evidence-browser .list-item").first.click()
                 page.wait_for_selector(".raw-answer")
+                for parameter in ("run=", "answer=", "status=", "review=all"):
+                    assert parameter in page.url
+                small_heights = page.locator(".button.small-button:visible").evaluate_all("nodes => nodes.map(node => node.getBoundingClientRect().height)")
+                assert small_heights and all(height >= 44 for height in small_heights)
+                assert page.locator("#menu-button").bounding_box()["height"] >= 44
                 page.wait_for_function("""() => {
                   const sidebar = document.getElementById('sidebar');
                   const transform = new DOMMatrix(getComputedStyle(sidebar).transform);
@@ -327,6 +477,7 @@ def main() -> None:
                 page.screenshot(path=OUTPUT / "09-review-mobile.png", full_page=True)
                 page.get_by_role("button", name="返回回答清单", exact=True).click()
                 page.locator(".evidence-browser:not(.has-detail) .list-rail").wait_for()
+                assert "answer=" not in page.url and "run=" in page.url and "status=succeeded" in page.url and "review=all" in page.url
                 assert not page.locator(".evidence-browser .detail-pane").is_visible()
                 page.screenshot(path=OUTPUT / "09a-review-list-mobile.png", full_page=True)
 
@@ -338,6 +489,8 @@ def main() -> None:
                     page.wait_for_timeout(200)
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"390 overflow: {name}"
                     page.screenshot(path=OUTPUT / f"12-{name}-mobile.png", full_page=True)
+                visible_tabs = page.locator(".tabs button").evaluate_all("nodes => nodes.map(node => { const rect = node.getBoundingClientRect(); return {left: rect.left, right: rect.right}; })")
+                assert all(tab["left"] >= 0 and tab["right"] <= 390 for tab in visible_tabs), "Mobile tabs are clipped"
                 page.get_by_role("button", name="检查演示引擎", exact=True).click()
                 page.get_by_role("button", name="确认并检查", exact=True).click()
                 page.locator("#toast.show").wait_for()
@@ -385,13 +538,13 @@ def main() -> None:
                     role_page.locator("#main-nav a[href='#/reports']").click()
                     role_page.get_by_role("tab", name=re.compile(r"^报告交付")).click()
                     role_page.get_by_role("button", name="打开报告", exact=True).click()
-                    role_page.get_by_text("报告 v1 · 客户版已批准", exact=True).wait_for()
+                    role_page.get_by_text(f"报告 v{report['version']} · 客户版已批准", exact=True).wait_for()
                     assert role_page.get_by_role("button", name="预览内部版", exact=True).count() == 0
                     assert role_page.get_by_role("link", name="下载内部版 PDF", exact=True).count() == 0
-                    report = role_page.request.get(f"{base}/api/projects/1/reports/1").json()
-                    assert "costs" not in report["snapshot"] and "internal_samples" not in report["snapshot"]
+                    report_data = role_page.request.get(f"{base}/api/projects/1/reports/{report_id}").json()
+                    assert "costs" not in report_data["snapshot"] and "internal_samples" not in report_data["snapshot"]
                     role_page.locator("#main-nav a[href='#/admin']").click()
-                    role_page.get_by_text("引擎配置", exact=True).wait_for()
+                    role_page.get_by_text("测量目标配置", exact=True).wait_for()
                     assert role_page.get_by_role("tab", name="成员与角色", exact=True).count() == 0
                     assert role_page.get_by_role("tab", name="成本与运营", exact=True).count() == 0
                     role_page.screenshot(path=OUTPUT / f"10-{role}-desktop.png", full_page=True)

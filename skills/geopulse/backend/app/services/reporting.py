@@ -72,6 +72,43 @@ def _source_structure(conn, run_ids: list[int]) -> list[dict]:
         ORDER BY c.source_type,c.domain,entity_role""", run_ids)
 
 
+def _web_evidence(conn, samples: list[dict], protocol: dict) -> tuple[int, list[dict]]:
+    from .web_collection import _draft_values, _validate_submission, attachment_public
+
+    issues = 0
+    evidence = []
+    for sample in samples:
+        if sample.get("measurement_target") != "consumer_web":
+            continue
+        collection = one(conn, "SELECT * FROM web_collections WHERE answer_id=?", (sample["id"],))
+        problem = not collection or collection.get("status") != "completed"
+        if collection:
+            values = _draft_values({
+                "draft_text": collection["draft_text"], "actual_url": collection["actual_url"],
+                "observed_mode": collection["observed_mode"], "observed_at": collection["observed_at"],
+                "timezone": collection["timezone"], "session_context": loads(collection["session_context_json"], {}),
+                "retrieval_status": collection["retrieval_status"], "notes": collection["notes"],
+                "citations": loads(collection["citations_json"], []),
+            })
+            try:
+                _validate_submission(conn, sample, collection, protocol, values)
+            except HTTPException:
+                problem = True
+            if collection["draft_text"] != (sample.get("raw_text") or ""):
+                problem = True
+        digest = hashlib.sha256((sample.get("raw_text") or "").encode("utf-8")).hexdigest()
+        if not sample.get("raw_text") or not sample.get("raw_text_sha256") or sample["raw_text_sha256"] != digest:
+            problem = True
+        attachments = all_rows(conn, "SELECT * FROM answer_attachments WHERE answer_id=? ORDER BY id", (sample["id"],))
+        issues += int(problem)
+        evidence.append({"answer_id": sample["id"], "collection_id": collection["id"] if collection else None,
+                         "raw_text_sha256": sample.get("raw_text_sha256") or "", "valid": not problem,
+                         "actual_url": collection["actual_url"] if collection else "",
+                         "observed_at": collection["observed_at"] if collection else "",
+                         "attachments": [attachment_public(row) for row in attachments]})
+    return issues, evidence
+
+
 def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict:
     if not wave_ids or len(wave_ids) > 2:
         raise HTTPException(400, "报告需要一个诊断 wave 或 baseline+current 两个 wave")
@@ -92,17 +129,23 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
             and (not observation.get("evidence") or observation["evidence"] not in (sample.get("raw_text") or ""))
             for sample in samples if sample.get("content_retained", 1)
             for observation in sample.get("observations", []))
+        web_evidence_issues, collection_evidence = _web_evidence(conn, samples, protocol)
         wave_payload.append({"wave": {key: value for key, value in wave.items()
-                                      if key not in ("protocol_json", "stats_json", "engine_snapshot_json")},
+                                      if key not in ("protocol_json", "stats_json", "engine_snapshot_json", "judge_snapshot_json")},
                              "protocol": protocol, "stats": loads(wave["stats_json"], {}),
                              "run": ({"id": run["id"], "attempt_no": run["attempt_no"], "status": run["status"]} if run else None),
                              "metrics": public_metrics, "raw_evidence_purged": purged,
-                             "evidence_issues": evidence_issues})
+                             "evidence_issues": evidence_issues, "web_evidence_issues": web_evidence_issues,
+                             "collection_evidence": collection_evidence})
         if run:
             run_ids.append(run["id"])
             internal_samples.extend({"id": sample["id"], "run_id": run["id"], "prompt_text": sample["prompt_text"],
                                      "engine_name": sample["engine_name"], "round_no": sample["round_no"],
                                      "status": sample["status"], "raw_text": sample["raw_text"],
+                                     "raw_text_sha256": sample.get("raw_text_sha256") or "",
+                                     "collection_status": sample.get("collection_status"),
+                                     "retrieval_status": sample.get("retrieval_status"),
+                                     "evidence_screenshots": sample.get("evidence_screenshots"),
                                      "content_retained": sample.get("content_retained", 1),
                                      "error_type": sample["error_type"], "error_detail": sample["error_detail"],
                                      "observations": sample["observations"]} for sample in samples)
@@ -190,6 +233,8 @@ def release_gates(snapshot: dict) -> list[str]:
             errors.append(f"{label}：{item['raw_evidence_purged']} 条原文已按保留策略清理，新报告不能通过原文证据闸门")
         if item.get("evidence_issues"):
             errors.append(f"{label}：{item['evidence_issues']} 条确认提及无法逐字回查原文")
+        if item.get("web_evidence_issues"):
+            errors.append(f"{label}：{item['web_evidence_issues']} 条人工 Web 样本的原文、截图或冻结上下文未通过证据校验")
     if snapshot.get("comparison") and not snapshot["comparison"].get("comparable"):
         errors.append(snapshot["comparison"].get("reason") or "对比口径不一致")
     for opportunity in snapshot["opportunities"]:

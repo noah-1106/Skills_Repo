@@ -5,6 +5,7 @@ REQUIRED_PROTOCOL = (
     "prompt_set_hash", "entity_version", "competitor_pool_hash", "engine_signature", "repeats",
     "temperature", "system_prompt", "max_tokens", "language", "market", "judge_version",
     "mode", "measurement_target", "valid_sample_definition", "stratum_weights",
+    "use_judge", "collection_protocol", "judge_signature", "judge_execution",
 )
 
 
@@ -20,7 +21,18 @@ def compare_metrics(baseline: dict, current: dict, baseline_protocol: dict, curr
                     min_completeness: float = 0.90) -> dict:
     check = protocol_check(baseline_protocol, current_protocol)
     if not check["comparable"]:
-        return {**check, "reason": "两次测量口径不同，拒绝输出严格前后变化"}
+        before_collection = baseline_protocol.get("collection_protocol") or {}
+        after_collection = current_protocol.get("collection_protocol") or {}
+        cross_surface = (baseline_protocol.get("measurement_target") != current_protocol.get("measurement_target") or
+                         before_collection.get("surface") != after_collection.get("surface") or
+                         before_collection.get("session_mode") != after_collection.get("session_mode"))
+        result = {**check, "reason": "两次测量口径不同，拒绝输出严格前后变化"}
+        if cross_surface:
+            result.update({"exploratory": True, "comparison_scope": "cross_surface",
+                           "reason": "API/Web 或不同页面、会话上下文不能严格比较；以下仅为各自摘要，不生成 pp 或意图迁移。",
+                           "baseline": _without_pairs(baseline), "current": _without_pairs(current),
+                           "delta": None, "transitions": [], "transition_counts": {}})
+        return result
     before_pairs = baseline.get("pairs") or {}
     after_pairs = current.get("pairs") or {}
     keys = set(before_pairs) & set(after_pairs)

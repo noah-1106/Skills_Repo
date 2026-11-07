@@ -91,6 +91,31 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
         targets = {engine["measurement_target"] for engine in engines}
         if len(modes) != 1 or len(targets) != 1:
             raise HTTPException(409, "同一 wave 不能混合 memory/search 或 API/产品端口径")
+        manual_web = targets == {"consumer_web"} and len(engines) == 1 and engines[0]["kind"] == "manual_web"
+        if targets == {"consumer_web"} and not manual_web:
+            raise HTTPException(409, "Consumer Web Wave 只能选择一个 manual_web 目标，不能与 Provider 或其他目标混合")
+        if not manual_web and (payload.get("collection_protocol") or payload.get("judge_engine_id")):
+            raise HTTPException(400, "采集协议和独立 Judge 仅用于人工 Consumer Web Wave")
+        collection_protocol = None
+        judge_engine = None
+        judge_signature = None
+        if manual_web:
+            collection_protocol = dict(payload.get("collection_protocol") or {})
+            product_url = str(collection_protocol.get("product_url") or "").rstrip("/")
+            if not collection_protocol or product_url != engines[0]["base_url"].rstrip("/"):
+                raise HTTPException(409, "冻结采集协议必须使用目标配置中的产品入口")
+            collection_protocol["product_url"] = engines[0]["base_url"].rstrip("/")
+            if bool(collection_protocol.get("networking")) != (engines[0]["mode"] == "search"):
+                raise HTTPException(409, "采集协议的联网声明必须与人工目标的 memory/search 口径一致")
+            if payload.get("use_judge", True):
+                judge_engine = one(conn, "SELECT * FROM engine_configs WHERE id=? AND project_id=? AND client_id=? AND enabled=1 AND kind!='manual_web'",
+                                   (payload.get("judge_engine_id"), project["id"], project["client_id"]))
+                if not judge_engine:
+                    raise HTTPException(409, "人工 Web 默认全量 Judge，必须选择一个独立 Provider Judge 引擎")
+                judge_signature = {"id": judge_engine["id"], "name": judge_engine["name"],
+                                   "kind": judge_engine["kind"], "model": judge_engine["model"],
+                                   "mode": judge_engine["mode"], "measurement_target": judge_engine["measurement_target"],
+                                   "role": "independent_judge"}
         entities = [entity_public(row) for row in all_rows(
             conn, "SELECT * FROM brand_entities WHERE project_id=? AND client_id=? AND status='confirmed' AND role IN ('primary','competitor') AND valid_to IS NULL ORDER BY role,name",
             (project["id"], project["client_id"]))]
@@ -116,21 +141,29 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
             "prompt_item_ids": [item["id"] for item in items], "entity_ids": entity_ids,
             "entity_version": entity_version, "competitor_pool_hash": competitor_pool_hash,
             "engine_ids": engine_ids, "engine_signature": engine_signature,
-            "repeats": repeats, "temperature": float(payload.get("temperature", 0.2)),
-            "system_prompt": payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。",
-            "max_tokens": int(payload.get("max_tokens", 700)), "language": project["language"],
+            "repeats": repeats, "temperature": None if manual_web else float(payload.get("temperature", 0.2)),
+            "system_prompt": None if manual_web else (payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。"),
+            "max_tokens": None if manual_web else int(payload.get("max_tokens", 700)), "language": project["language"],
             "market": project["market"], "judge_version": JUDGE_VERSION, "mode": modes.pop(),
-            "measurement_target": targets.pop(), "valid_sample_definition": VALID_SAMPLE_DEFINITION,
+            "measurement_target": targets.pop(),
+            "valid_sample_definition": "succeeded_nonempty_evidence_v1" if manual_web else VALID_SAMPLE_DEFINITION,
             "stratum_weights": loads(prompt_set["weights_json"], {}),
             "max_safe_retries": int(payload.get("max_safe_retries", 2)),
-            "use_judge": bool(payload.get("use_judge", True)), "reported_model_versions": {
+            "use_judge": bool(payload.get("use_judge", True)),
+            "collection_protocol": collection_protocol,
+            "judge_signature": judge_signature,
+            "judge_execution": {"temperature": float(payload.get("temperature", 0.2)),
+                                "system_prompt": payload.get("system_prompt") or "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。",
+                                "max_tokens": int(payload.get("max_tokens", 700))} if manual_web else None,
+            "reported_model_versions": {
                 str(engine["id"]): engine["model"] for engine in engines},
         }
         now = utc_now()
-        wave_id = conn.execute("INSERT INTO waves(client_id,project_id,prompt_set_id,entity_version,label,anchor_at,protocol_json,stats_json,engine_snapshot_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        wave_id = conn.execute("INSERT INTO waves(client_id,project_id,prompt_set_id,entity_version,label,anchor_at,protocol_json,stats_json,engine_snapshot_json,judge_snapshot_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                                (project["client_id"], project["id"], prompt_set["id"], entity_version,
                                 payload["label"].strip(), payload.get("anchor_at") or now,
-                                dumps(protocol), dumps(stats), dumps([engine_execution(engine) for engine in engines]), now)).lastrowid
+                                dumps(protocol), dumps(stats), dumps([engine_execution(engine) for engine in engines]),
+                                dumps(engine_execution(judge_engine) if judge_engine else {}), now)).lastrowid
         wave = one(conn, "SELECT * FROM waves WHERE id=?", (wave_id,))
         audit(conn, actor, project, "wave", wave_id, "create", None, wave)
         return wave
@@ -145,24 +178,33 @@ def _create_run(conn, project: dict, wave: dict, actor: int | None) -> dict:
     attempt = (one(conn, "SELECT MAX(attempt_no) AS value FROM runs WHERE wave_id=?", (wave["id"],))["value"] or 0) + 1
     prompts = prompt_set_content(conn, protocol["prompt_set_id"])
     engines = [engine_execution(engine) for engine in frozen_engines(conn, wave)]
+    manual_web = protocol.get("measurement_target") == "consumer_web"
+    judge_engine = loads(wave.get("judge_snapshot_json"), {}) or None
     if not engines:
         raise HTTPException(409, "Wave 缺少冻结的引擎执行快照")
     engine_ids = [int(engine["id"]) for engine in engines]
+    check_ids = [*engine_ids, *([int(judge_engine["id"])] if judge_engine else [])]
     current = {row["id"]: row for row in all_rows(
-        conn, f"SELECT id,enabled FROM engine_configs WHERE id IN ({','.join('?' for _ in engine_ids)})", engine_ids)}
-    disabled = [str(engine_id) for engine_id in engine_ids if not current.get(engine_id) or not current[engine_id]["enabled"]]
+        conn, f"SELECT id,enabled FROM engine_configs WHERE id IN ({','.join('?' for _ in check_ids)})", check_ids)}
+    disabled = [str(engine_id) for engine_id in check_ids if not current.get(engine_id) or not current[engine_id]["enabled"]]
     if disabled:
         raise HTTPException(409, f"引擎已停用或不存在，不能创建新 Run：{', '.join(disabled)}")
     entities = [entity_public(row) for row in all_rows(conn,
         f"SELECT * FROM brand_entities WHERE id IN ({','.join('?' * len(protocol['entity_ids']))})", protocol["entity_ids"])]
     snapshot = {"protocol": protocol, "prompts": prompts, "engines": engines,
-                "entities": entities, "created_at": utc_now()}
-    run_id = conn.execute("INSERT INTO runs(client_id,project_id,wave_id,attempt_no,status,snapshot_json,started_at) VALUES(?,?,?,?,'queued',?,?)",
-                          (project["client_id"], project["id"], wave["id"], attempt, dumps(snapshot), utc_now())).lastrowid
+                "judge_engine": judge_engine, "entities": entities, "created_at": utc_now()}
+    run_id = conn.execute("INSERT INTO runs(client_id,project_id,wave_id,attempt_no,status,snapshot_json,started_at) VALUES(?,?,?,?,?,?,?)",
+                          (project["client_id"], project["id"], wave["id"], attempt,
+                           "running" if manual_web else "queued", dumps(snapshot), utc_now())).lastrowid
     now = utc_now()
-    conn.executemany("INSERT INTO answers(client_id,project_id,run_id,prompt_item_id,engine_config_id,round_no,created_at) VALUES(?,?,?,?,?,?,?)",
-                     [(project["client_id"], project["id"], run_id, item["id"], engine["id"], round_no, now)
+    conn.executemany("INSERT INTO answers(client_id,project_id,run_id,prompt_item_id,engine_config_id,round_no,status,model,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                     [(project["client_id"], project["id"], run_id, item["id"], engine["id"], round_no,
+                       "awaiting_collection" if manual_web else "queued", engine.get("model") if manual_web else None, now)
                       for engine in engines for item in prompts for round_no in range(1, int(protocol["repeats"]) + 1)])
+    if manual_web:
+        conn.execute("""INSERT INTO web_collections(client_id,project_id,answer_id,status,created_at,updated_at)
+                        SELECT client_id,project_id,id,'awaiting_collection',?,? FROM answers WHERE run_id=?""",
+                     (now, now, run_id))
     conn.execute("UPDATE waves SET status='running' WHERE id=? AND status IN ('planned','data_ready','data_ready_with_warnings','analyzed')",
                  (wave["id"],))
     audit(conn, actor, project, "run", run_id, "create", None, {"wave_id": wave["id"], "attempt_no": attempt})
@@ -170,7 +212,10 @@ def _create_run(conn, project: dict, wave: dict, actor: int | None) -> dict:
 
 
 def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
-                         confirmation_reason: str) -> dict:
+                         confirmation_reason: str, allow_manual: bool = False) -> dict:
+    protocol = loads(wave["protocol_json"], {})
+    if protocol.get("measurement_target") == "consumer_web" and not allow_manual:
+        raise HTTPException(409, "人工 Consumer Web 只能由用户显式创建采集 Run，调度器不会自动操作网页")
     estimate = estimate_wave_cost(conn, wave)
     decision = authorize_budget(conn, project, estimate, wave=wave, actor=actor,
                                 confirmation_reason=confirmation_reason)
@@ -183,11 +228,11 @@ def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
 
 
 def create_run(project: dict, wave: dict, actor: int | None, conn=None,
-               confirmation_reason: str = "") -> dict:
+               confirmation_reason: str = "", allow_manual: bool = False) -> dict:
     if conn is not None:
-        return _create_budgeted_run(conn, project, wave, actor, confirmation_reason)
+        return _create_budgeted_run(conn, project, wave, actor, confirmation_reason, allow_manual)
     with transaction() as owned:
-        return _create_budgeted_run(owned, project, wave, actor, confirmation_reason)
+        return _create_budgeted_run(owned, project, wave, actor, confirmation_reason, allow_manual)
 
 
 def run_progress(conn, run_id: int) -> dict:
@@ -199,19 +244,21 @@ def run_progress(conn, run_id: int) -> dict:
             "by_status": counts}
 
 
-def _record_operations(conn, answer: dict, operations: list[dict], failure: dict | None = None) -> dict:
+def _record_operations(conn, answer: dict, operations: list[dict], failure: dict | None = None,
+                       engine: dict | None = None) -> dict:
     aggregate = Counter()
     project = {"id": answer["project_id"], "client_id": answer["client_id"]}
+    recording_engine = engine or answer["engine"]
     recorded_failures = set()
     for operation in operations:
         usage = operation.get("usage") or {}
         for key in ("prompt_tokens", "completion_tokens", "search_calls"):
             aggregate[key] += int(usage.get(key) or 0)
-        record_attempt(conn, project=project, engine=answer["engine"], operation=operation, answer=answer)
+        record_attempt(conn, project=project, engine=recording_engine, operation=operation, answer=answer)
         if operation.get("status") == "failed":
             recorded_failures.add(operation["kind"])
     if failure and failure.get("kind", "answer") not in recorded_failures:
-        record_attempt(conn, project=project, engine=answer["engine"], answer=answer,
+        record_attempt(conn, project=project, engine=recording_engine, answer=answer,
                        operation={**failure, "kind": failure.get("kind", "answer"), "status": "failed"})
     return dict(aggregate)
 
@@ -239,10 +286,11 @@ def _insert_citations(conn, answer: dict, citations: list[dict], observations: l
             continue
         content_hash = hashlib.sha256((citation.get("title", "") + citation.get("text", "")).encode()).hexdigest()
         linked = observation_by_url.get(url) or []
-        conn.execute("INSERT OR IGNORE INTO citations(client_id,project_id,answer_id,observation_id,raw_url,final_url,title,domain,source_type,content_hash,returned_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        conn.execute("INSERT OR IGNORE INTO citations(client_id,project_id,answer_id,observation_id,raw_url,final_url,title,domain,source_type,content_hash,returned_at,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                      (answer["client_id"], answer["project_id"], answer["id"], linked[0] if len(linked) == 1 else None,
                       url, citation.get("final_url") or "", citation.get("title") or "", parsed.hostname,
-                      _classify_source(url, primary, settings), content_hash, utc_now()))
+                      "人工记录的页面引用" if citation.get("origin") == "manual_page" else _classify_source(url, primary, settings),
+                      content_hash, citation.get("returned_at") or utc_now(), citation.get("origin") or "provider_returned"))
 
 
 def _insert_discovered(conn, answer: dict, discovered: list[dict], actor: int | None = None) -> None:
@@ -274,7 +322,7 @@ def _store_observations(conn, answer: dict, observations: list[dict], actor: int
 
 
 def _answer_context(conn, answer_id: int) -> dict | None:
-    answer = one(conn, "SELECT a.*,r.wave_id,r.snapshot_json,r.cancel_requested,w.protocol_json,w.engine_snapshot_json,p.settings_json FROM answers a JOIN runs r ON r.id=a.run_id JOIN waves w ON w.id=r.wave_id JOIN projects p ON p.id=a.project_id WHERE a.id=?", (answer_id,))
+    answer = one(conn, "SELECT a.*,r.wave_id,r.snapshot_json,r.cancel_requested,w.protocol_json,w.engine_snapshot_json,w.judge_snapshot_json,p.settings_json FROM answers a JOIN runs r ON r.id=a.run_id JOIN waves w ON w.id=r.wave_id JOIN projects p ON p.id=a.project_id WHERE a.id=?", (answer_id,))
     if not answer:
         return None
     answer["snapshot"] = loads(answer["snapshot_json"], {})
@@ -283,6 +331,7 @@ def _answer_context(conn, answer_id: int) -> dict | None:
     engines = answer["snapshot"].get("engines") or frozen_engines(conn, answer)
     answer["engine"] = next((engine for engine in engines
                              if int(engine["id"]) == int(answer["engine_config_id"])), None)
+    answer["judge_engine"] = answer["snapshot"].get("judge_engine") or loads(answer.get("judge_snapshot_json"), {}) or None
     answer["prompt"] = next((item for item in answer["snapshot"].get("prompts", [])
                              if int(item["id"]) == int(answer["prompt_item_id"])), None)
     if not answer["prompt"]:
@@ -298,14 +347,13 @@ def _claim_answer() -> dict | None:
         row = one(conn, "SELECT a.id,a.run_id FROM answers a JOIN runs r ON r.id=a.run_id WHERE a.status IN ('queued','judging') AND r.cancel_requested=0 AND r.status IN ('queued','running') ORDER BY a.id LIMIT 1")
         if not row:
             return None
-        current = one(conn, "SELECT status,raw_text FROM answers WHERE id=?", (row["id"],))
-        conn.execute("UPDATE answers SET status=? WHERE id=?", ("judging" if current["raw_text"] else "running", row["id"]))
+        conn.execute("UPDATE answers SET status='running' WHERE id=?", (row["id"],))
         conn.execute("UPDATE runs SET status='running',started_at=COALESCE(started_at,?) WHERE id=?", (utc_now(), row["run_id"]))
         return row
 
 
 def _finalize_run(conn, run_id: int) -> None:
-    remaining = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('queued','running','judging')", (run_id,))["count"]
+    remaining = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('queued','running','judging','awaiting_collection')", (run_id,))["count"]
     if remaining:
         return
     counts = {row["status"]: row["count"] for row in conn.execute("SELECT status,COUNT(*) AS count FROM answers WHERE run_id=? GROUP BY status", (run_id,))}
@@ -346,6 +394,20 @@ def process_answer(answer_id: int) -> None:
     raw_text = context["raw_text"]
     citations: list[dict] = []
     answer_usage = loads(context["usage_json"], {})
+    manual_web = engine.get("kind") == "manual_web"
+    if manual_web and not raw_text:
+        with transaction() as conn:
+            conn.execute("UPDATE answers SET status='failed',valid_sample=0,error_type='collection_missing',error_detail='人工回答尚未完整提交',completed_at=? WHERE id=?",
+                         (utc_now(), answer_id))
+            _finalize_run(conn, context["run_id"])
+        return
+    if manual_web:
+        with connect() as conn:
+            collection = one(conn, "SELECT * FROM web_collections WHERE answer_id=?", (answer_id,))
+        citations = loads(collection["citations_json"], []) if collection else []
+        for citation in citations:
+            citation["origin"] = "manual_page"
+            citation["returned_at"] = collection.get("observed_at") or utc_now()
     if not raw_text:
         try:
             provider = build_provider(engine, SecretStore().get(engine.get("secret_ref", "")),
@@ -356,8 +418,8 @@ def process_answer(answer_id: int) -> None:
             cancel_after_answer = False
             with transaction() as conn:
                 usage = _record_operations(conn, context, result.operations)
-                conn.execute("UPDATE answers SET raw_text=?,status='judging',usage_json=?,model=?,completed_at=NULL,valid_sample=NULL,content_retained=1 WHERE id=? AND raw_text IS NULL",
-                             (raw_text, dumps(usage), result.model, answer_id))
+                conn.execute("UPDATE answers SET raw_text=?,raw_text_sha256=?,status='judging',usage_json=?,model=?,completed_at=NULL,valid_sample=NULL,content_retained=1 WHERE id=? AND raw_text IS NULL",
+                             (raw_text, hashlib.sha256(raw_text.encode("utf-8")).hexdigest(), dumps(usage), result.model, answer_id))
                 answer_usage = usage
                 cancel_after_answer = bool(one(conn, "SELECT cancel_requested FROM runs WHERE id=?", (context["run_id"],))["cancel_requested"])
                 if cancel_after_answer:
@@ -396,20 +458,33 @@ def process_answer(answer_id: int) -> None:
     observations = fallback_observations(raw_text, entities, demo=demo)
     discovered: list[dict] = []
     if protocol.get("use_judge") and not demo:
-        try:
-            if provider is None:
-                provider = build_provider(engine, SecretStore().get(engine.get("secret_ref", "")),
-                                          [entity["name"] for entity in sorted(entities, key=lambda item: item["role"] != "primary")])
-            with _engine_slot(engine):
-                observations, discovered, judged = judge_answer(provider, raw_text, entities, protocol, citations)
-            with transaction() as conn:
-                _record_operations(conn, context, judged.operations)
-        except Exception as error:
-            observations = fallback_observations(raw_text, entities, demo=False)
-            kind = error.kind if isinstance(error, ProviderError) else "judge_invalid"
-            with transaction() as conn:
-                _record_operations(conn, context, error.operations if isinstance(error, ProviderError) else [],
-                                   {"kind": "judge", "error_type": kind, "error_detail": str(error)[:1000]})
+        judge_engine = context.get("judge_engine") if manual_web else engine
+        if not judge_engine or judge_engine.get("kind") == "manual_web":
+            for observation in observations:
+                observation["judge_status"] = "judge-config-missing"
+                observation["review_status"] = "pending"
+        else:
+            try:
+                if judge_engine.get("kind") == "demo":
+                    observations = fallback_observations(raw_text, entities, demo=True)
+                    operations = [{"kind": "judge", "status": "succeeded", "model": "geopulse-demo-judge",
+                                   "usage": {}, "request_id": "demo-judge"}]
+                else:
+                    provider = build_provider(judge_engine, SecretStore().get(judge_engine.get("secret_ref", "")),
+                                              [entity["name"] for entity in sorted(entities, key=lambda item: item["role"] != "primary")])
+                    judge_protocol = {**protocol, **(protocol.get("judge_execution") or {})} if manual_web else protocol
+                    with _engine_slot(judge_engine):
+                        observations, discovered, judged = judge_answer(provider, raw_text, entities, judge_protocol, citations)
+                    operations = judged.operations
+                with transaction() as conn:
+                    _record_operations(conn, context, operations, engine=judge_engine)
+            except Exception as error:
+                observations = fallback_observations(raw_text, entities, demo=False)
+                kind = error.kind if isinstance(error, ProviderError) else "judge_invalid"
+                with transaction() as conn:
+                    _record_operations(conn, context, error.operations if isinstance(error, ProviderError) else [],
+                                       {"kind": "judge", "error_type": kind, "error_detail": str(error)[:1000]},
+                                       engine=judge_engine)
     with transaction() as conn:
         stored = _store_observations(conn, {"id": answer_id, **context}, observations)
         primary = next(entity for entity in entities if entity["role"] == "primary")
@@ -430,7 +505,7 @@ class Worker:
             conn.execute("UPDATE answers SET status='queued' WHERE status='running' AND raw_text IS NULL")
             conn.execute("UPDATE answers SET status='judging' WHERE status='running' AND raw_text IS NOT NULL")
             conn.execute("UPDATE answers SET status='judging' WHERE status='judging' AND raw_text IS NOT NULL")
-            idle_runs = all_rows(conn, "SELECT id FROM runs r WHERE status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM answers a WHERE a.run_id=r.id AND a.status IN ('queued','running','judging'))")
+            idle_runs = all_rows(conn, "SELECT id FROM runs r WHERE status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM answers a WHERE a.run_id=r.id AND a.status IN ('queued','running','judging','awaiting_collection'))")
             for run in idle_runs:
                 _finalize_run(conn, run["id"])
 
@@ -483,6 +558,14 @@ def load_run_samples(conn, run: dict) -> tuple[list[dict], dict]:
         answer["engine_name"] = engine.get("name") or str(answer["engine_config_id"])
         answer["engine_mode"] = engine.get("mode") or protocol.get("mode") or "memory"
         answer["engine_kind"] = engine.get("kind") or "unknown"
+        answer["measurement_target"] = protocol.get("measurement_target") or "provider_api"
+        if answer["measurement_target"] == "consumer_web":
+            collection = one(conn, "SELECT status,failure_type,retrieval_status FROM web_collections WHERE answer_id=?", (answer["id"],)) or {}
+            answer["collection_status"] = collection.get("status") or "missing"
+            answer["collection_failure_type"] = collection.get("failure_type") or ""
+            answer["retrieval_status"] = collection.get("retrieval_status") or "unknown"
+            answer["evidence_screenshots"] = one(conn, "SELECT COUNT(*) AS count FROM answer_attachments WHERE answer_id=? AND kind='screenshot' AND content IS NOT NULL AND purged_at IS NULL", (answer["id"],))["count"]
+            answer["evidence_complete"] = bool(answer.get("raw_text_sha256") and answer["evidence_screenshots"] and collection.get("status") == "completed")
         observations = all_rows(conn, "SELECT o.*,b.name,b.role FROM observations o JOIN brand_entities b ON b.id=o.brand_entity_id WHERE o.answer_id=? ORDER BY o.brand_entity_id,o.revision DESC", (answer["id"],))
         latest = {}
         for observation in observations:

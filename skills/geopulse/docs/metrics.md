@@ -2,11 +2,13 @@
 
 ## 1. 有效样本与实体判定
 
-设一次预期样本为 `prompt_item × engine × round`。只有同时满足以下条件才进入有效集合 `V`：
+设一次预期样本为 `prompt_item × engine × round`。Provider 样本只有同时满足以下条件才进入有效集合 `V`：
 
 - `answer.status == "succeeded"`；
 - `raw_text` 非空；
 - Provider 未标为空回答或截断回答。
+
+人工 Consumer Web 使用 `succeeded_nonempty_evidence_v1`：除成功处理和非空原文外，还必须完成不可变提交，并保留通过 bytes/hash/size/magic 校验的有效截图及一致的实际页面/冻结上下文。只有完整提交且处理成功才持久化 `valid_sample=1`。
 
 失败、取消、空、截断、排队和执行中样本不进入 `V`，也不能解释成“未提及”。无有效样本时页面和报告写“无法诊断”，而不是输出业务上的 0%。
 
@@ -167,7 +169,7 @@ Citation Rate = 主品牌 confirmed mentioned 且关联至少一个白名单 cit
 
 Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用率”，不能显示虚构的 0% 或引用 URL。
 
-来源结构按 `source_type × domain × entity_role` 汇总引用数和去重来源数。分类支持官网、配置域名类别（如百科/UGC）和其他。只有 Provider 实际返回的 HTTP(S) URL 可保存；系统不补造跳转或最终 URL。
+来源结构按 `source_type × domain × entity_role` 汇总引用数和去重来源数。分类支持官网、配置域名类别（如百科/UGC）和其他。Provider 引用为 `origin=provider_returned`；人工实际看到的页面引用为 `origin=manual_page`，只记录 URL、标题和卡片文本，不自动抓取或补造最终 URL。两种来源不会在 UI 或报告中混称。
 
 ## 7. 数据质量
 
@@ -182,6 +184,12 @@ Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用�
 | `judge_fallback_rate` | 任一 observation 为 rules-fallback 的回答 / 有效回答 |
 | `pending_review_answers` | 任一当前 observation 待复核的回答数 |
 | `measurement_modes` | 当前有效回答的 memory/search 集合 |
+| `measurement_targets` | 当前有效回答的 provider_api/consumer_web 集合 |
+| `awaiting_collection` | 尚待人工提交的任务数，不进入有效分母 |
+| `collection_status_counts` | 待采集、采集中、待提交复核、完成、失败、需重采的计数 |
+| `collection_failure_counts` | 验证码、登录失效、空、截断、错误页、流式中断等失败计数 |
+| `retrieval_status_counts` | 人工记录的检索 on/off/unavailable/unknown 计数 |
+| `evidence_coverage` | 具有完整人工证据的有效样本数 / 人工有效样本数 |
 | `is_demo` | 全部有效回答来自 demo 引擎 |
 
 只要样本中含 demo，`limitations` 就明确“包含演示引擎，结果不代表真实 AI 表现”。不同模式不能合并成正常汇总。
@@ -193,7 +201,8 @@ Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用�
 - prompt set hash、实体版本、竞品池 hash；
 - engine signature、repeats、temperature、system prompt、max tokens；
 - language、market、judge version；
-- memory/search、measurement target；
+- memory/search、measurement target、`use_judge`；
+- 人工 Web 的 collection protocol、独立 Judge signature 和 Judge 执行协议；
 - 有效样本定义、stratum weights。
 
 配对键为 `engine_config_id:canonical_intent_id`：
@@ -207,6 +216,8 @@ effective_completeness = min(pair_completeness, sample_completeness)
 `effective_completeness < 当前 Wave 冻结阈值` 时拒绝严格变化输出，默认阈值 90%。
 
 每个共同配对键分为：持续提及、持续缺席、新增提及、失去提及。指标变化使用百分点 `pp`；基线为 0 时 `relative=null`，不输出无限相对提升。供应商返回模型版本变化时只标探索性比较。
+
+API/Web 或不同 surface/session 上下文属于 `comparison_scope=cross_surface`：`comparable=false`、`exploratory=true`，只返回 baseline/current 各自摘要，`delta=null`、`transitions=[]`。不得把跨产品端差异写成同口径提升或下降。
 
 ## 9. 机会评分
 

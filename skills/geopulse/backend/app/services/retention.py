@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
-from ..db import all_rows, loads, one, transaction, utc_now
+from ..db import all_rows, dumps, loads, one, transaction, utc_now
 from ..security import audit
 
 
@@ -26,7 +26,9 @@ def preview_retention(conn, project: dict) -> dict:
                 "message": "未配置保留期限，原始回答不会自动删除"}
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
     count = one(conn, """SELECT COUNT(*) AS count FROM answers WHERE project_id=? AND content_retained=1
-        AND raw_text IS NOT NULL AND trim(raw_text)!='' AND status IN ('succeeded','failed','cancelled')
+        AND (raw_text IS NOT NULL AND trim(raw_text)!='' OR EXISTS(SELECT 1 FROM web_collections w WHERE w.answer_id=answers.id AND trim(w.draft_text)!='')
+             OR EXISTS(SELECT 1 FROM answer_attachments a WHERE a.answer_id=answers.id AND a.content IS NOT NULL))
+        AND status IN ('succeeded','failed','cancelled')
         AND COALESCE(completed_at,created_at)<?""", (project["id"], cutoff))["count"]
     return {"enabled": True, "retention_days": days, "candidate_count": count, "cutoff": cutoff,
             "message": "仅清理到期原文；判定、有效样本事实与聚合指标保留"}
@@ -45,7 +47,9 @@ def _execute(conn, project: dict, actor: int | None) -> dict:
     if not preview["enabled"]:
         return preview | {"purged_count": 0, "status": "skipped"}
     answers = conn.execute("""SELECT id FROM answers WHERE project_id=? AND content_retained=1
-        AND raw_text IS NOT NULL AND trim(raw_text)!='' AND status IN ('succeeded','failed','cancelled')
+        AND (raw_text IS NOT NULL AND trim(raw_text)!='' OR EXISTS(SELECT 1 FROM web_collections w WHERE w.answer_id=answers.id AND trim(w.draft_text)!='')
+             OR EXISTS(SELECT 1 FROM answer_attachments a WHERE a.answer_id=answers.id AND a.content IS NOT NULL))
+        AND status IN ('succeeded','failed','cancelled')
         AND COALESCE(completed_at,created_at)<?""", (project["id"], preview["cutoff"])).fetchall()
     ids = [int(row["id"]) for row in answers]
     if ids:
@@ -57,11 +61,25 @@ def _execute(conn, project: dict, actor: int | None) -> dict:
             WHERE project_id=? AND id IN ({marks}) AND content_retained=1""",
                      [utc_now(), project["id"], *ids])
     purged = conn.execute("SELECT changes() AS count").fetchone()["count"] if ids else 0
+    attachment_purged = 0
+    if ids:
+        conn.execute(f"UPDATE answer_attachments SET content=NULL,purged_at=? WHERE project_id=? AND answer_id IN ({marks}) AND content IS NOT NULL",
+                     [utc_now(), project["id"], *ids])
+        attachment_purged = conn.execute("SELECT changes() AS count").fetchone()["count"]
+        collections = all_rows(conn, f"SELECT id,citations_json FROM web_collections WHERE project_id=? AND answer_id IN ({marks})",
+                               [project["id"], *ids])
+        for collection in collections:
+            citations = loads(collection["citations_json"], [])
+            for citation in citations:
+                citation["text"] = ""
+            conn.execute("UPDATE web_collections SET draft_text='',citations_json=?,content_purged_at=?,updated_at=? WHERE id=?",
+                         (dumps(citations), utc_now(), utc_now(), collection["id"]))
     finished = utc_now()
     run_id = conn.execute("INSERT INTO retention_runs(client_id,project_id,cutoff,status,candidate_count,purged_count,actor,created_at,finished_at) VALUES(?,?,?,'succeeded',?,?,?,?,?)",
                           (project["client_id"], project["id"], preview["cutoff"], len(ids), purged,
                            actor, started, finished)).lastrowid
-    result = {**preview, "purged_count": purged, "status": "succeeded", "retention_run_id": run_id}
+    result = {**preview, "purged_count": purged, "attachment_purged_count": attachment_purged,
+              "status": "succeeded", "retention_run_id": run_id}
     audit(conn, actor, project, "retention", run_id, "execute", None, result)
     return result
 

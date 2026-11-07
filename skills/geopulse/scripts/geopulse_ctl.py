@@ -12,17 +12,21 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "backend"))
-
-from app import config
-from app.db import connect, dumps, one
-from app.migrations import SCHEMA_VERSION, backup, initialize, migrate, restore
-from app.security import hash_password
-from app.services.exports import build_project_export
-from app.services.measurement import Worker
+LOCAL_COMMANDS = {
+    "init", "migrate", "backup", "restore", "set-admin-password",
+    "run-worker", "golden-eval", "export", "delete-project",
+}
 
 
-def main():
+def local_main():
+    sys.path.insert(0, str(ROOT / "backend"))
+    from app import config
+    from app.db import connect, dumps, one
+    from app.migrations import SCHEMA_VERSION, backup, initialize, migrate, restore
+    from app.security import hash_password
+    from app.services.exports import build_project_export
+    from app.services.measurement import Worker
+
     parser = argparse.ArgumentParser(prog="geopulse")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
@@ -107,5 +111,12 @@ def main():
         print("项目已删除并执行 VACUUM；备份文件需按保留策略另行处理")
 
 
+def main():
+    if sys.argv[1:2] and sys.argv[1] in LOCAL_COMMANDS:
+        return local_main()
+    from geopulse_cli.cli import main as remote_main
+    return remote_main()
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -11,6 +11,8 @@ def build_provider(engine: dict, api_key: str = "", seed_brands: list[str] | Non
     kind = engine["kind"]
     if kind == "demo":
         return DemoProvider(seed_brands)
+    if kind == "manual_web":
+        raise ProviderError("人工 Consumer Web 目标不是 Provider，不能自动发起回答、Search 或健康检查", "manual_target_not_provider")
     if not api_key:
         raise ProviderError(f"引擎 {engine['name']} 缺少 API Key", "missing_api_key")
     if kind == "kimi_search":

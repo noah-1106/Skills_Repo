@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+import urllib.parse
 from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Request
@@ -31,8 +32,15 @@ def list_engines(project_id: int, request: Request):
 
 
 def validate_engine(payload: EngineIn) -> None:
+    if payload.kind == "manual_web":
+        parsed = urllib.parse.urlparse(payload.base_url)
+        if payload.measurement_target != "consumer_web" or parsed.scheme != "https" or not parsed.hostname:
+            raise HTTPException(400, "人工 Consumer Web 目标必须声明 consumer_web 并提供 HTTPS 产品入口")
+        if payload.api_key:
+            raise HTTPException(400, "人工 Consumer Web 目标不保存 API Key、Cookie 或登录 Token")
+        return
     if payload.measurement_target != "provider_api":
-        raise HTTPException(400, "当前仅支持合法 provider_api 采集，不能把 API 结果标为产品端")
+        raise HTTPException(400, "Provider 引擎只能使用 provider_api；网页观察请创建 manual_web 目标")
     if payload.kind == "demo" and payload.mode != "memory":
         raise HTTPException(400, "demo 仅用于 memory 演示")
     if payload.kind == "openai_compat" and payload.mode != "memory":
@@ -47,7 +55,7 @@ def validate_engine(payload: EngineIn) -> None:
 def create_engine(project_id: int, payload: EngineIn, request: Request):
     context = require_admin(request, project_id)
     validate_engine(payload)
-    if payload.kind != "demo" and not payload.api_key:
+    if payload.kind not in ("demo", "manual_web") and not payload.api_key:
         raise HTTPException(400, "生产引擎需要 API Key")
     with connect() as conn:
         ref = SecretStore().put(payload.api_key) if payload.api_key else ""
@@ -68,10 +76,12 @@ def update_engine(project_id: int, engine_id: int, payload: EngineIn, request: R
     validate_engine(payload)
     with connect() as conn:
         old = scoped_object(conn, "engine_configs", engine_id, context["project"])
+        if (old["kind"] == "manual_web") != (payload.kind == "manual_web"):
+            raise HTTPException(409, "Provider 引擎与人工 Web 目标不能互相改型，请新建独立配置")
         ref = old["secret_ref"]
         if payload.api_key and payload.api_key != "__KEEP__":
             ref = SecretStore().put(payload.api_key)
-        if old["kind"] != "demo" and not SecretStore().get(ref):
+        if old["kind"] not in ("demo", "manual_web") and not SecretStore().get(ref):
             raise HTTPException(400, "请填写 API Key")
         conn.execute("UPDATE engine_configs SET name=?,vendor=?,kind=?,model=?,base_url=?,secret_ref=?,mode=?,measurement_target=?,region=?,cost_rule_json=?,timeout=?,rate_limit=?,enabled=? WHERE id=?",
                      (payload.name, payload.vendor, payload.kind, payload.model, payload.base_url.rstrip("/"), ref,
@@ -90,6 +100,8 @@ def engine_health(project_id: int, engine_id: int, request: Request, payload: He
     operation_id = f"health-{uuid.uuid4().hex}"
     with transaction() as conn:
         engine = scoped_object(conn, "engine_configs", engine_id, context["project"])
+        if engine["kind"] == "manual_web":
+            raise HTTPException(409, "人工 Consumer Web 目标没有 Provider 健康检查或外部调用")
         estimate = estimate_health(engine)
         decision = authorize_budget(conn, context["project"], estimate, actor=context["user"]["id"],
                                     confirmation_reason=reason)
@@ -177,6 +189,8 @@ def create_schedule(project_id: int, payload: ScheduleIn, request: Request):
     context = require_admin(request, project_id)
     with transaction() as conn:
         wave = scoped_object(conn, "waves", payload.wave_id, context["project"])
+        if loads(wave["protocol_json"], {}).get("measurement_target") == "consumer_web":
+            raise HTTPException(409, "人工 Consumer Web 不能自动调度；请在测量页显式创建人工采集 Run")
         anchor = wave["anchor_at"]
         if payload.action_id:
             action = scoped_object(conn, "actions", payload.action_id, context["project"])

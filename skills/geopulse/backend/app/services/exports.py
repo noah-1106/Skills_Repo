@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 
 from ..db import all_rows, dumps, utc_now
@@ -11,10 +12,12 @@ from ..security import audit
 TABLES = ("clients", "projects", "memberships", "engine_configs", "brand_entities", "prompt_sets", "prompt_items",
           "waves", "runs", "answers", "call_attempts", "observations", "citations", "opportunities", "actions",
           "external_events", "reports", "report_events", "schedules", "alerts", "work_logs", "audit_events",
-          "budget_reservations", "retention_runs", "backup_runs")
+          "budget_reservations", "retention_runs", "backup_runs", "web_collections", "answer_attachments")
 
 
 def sanitize(value):
+    if isinstance(value, bytes):
+        return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
@@ -39,8 +42,8 @@ def sanitize(value):
 
 def build_project_export(conn, project: dict, actor: int | None = None) -> dict:
     audit(conn, actor, project, "project", project["id"], "export", None,
-          {"schema_version": SCHEMA_VERSION, "contract": "geopulse-project-v1"})
-    payload = {"schema_version": SCHEMA_VERSION, "export_contract": "geopulse-project-v1",
+          {"schema_version": SCHEMA_VERSION, "contract": "geopulse-project-v2"})
+    payload = {"schema_version": SCHEMA_VERSION, "export_contract": "geopulse-project-v2",
                "project_id": project["id"], "project": sanitize(project), "exported_at": utc_now(), "tables": {}}
     for table in TABLES:
         if table == "clients":

@@ -72,35 +72,41 @@ def estimate_wave(conn, wave: dict) -> dict:
     prompts = len(protocol.get("prompt_item_ids") or [])
     engines = frozen_engines(conn, wave)
     signatures = protocol.get("engine_signature") or []
+    manual_web = protocol.get("measurement_target") == "consumer_web"
+    collection_tasks = prompts * int(protocol.get("repeats") or 1) if manual_web else 0
+    judge_engine = loads(wave.get("judge_snapshot_json"), {}) if manual_web and protocol.get("use_judge") else {}
+    cost_engines = ([(judge_engine, protocol.get("judge_signature") or judge_engine)] if judge_engine else
+                    [] if manual_web else list(zip(engines, signatures)))
     repeats = int(protocol.get("repeats") or 1)
     retries = int(protocol.get("max_safe_retries") or 0)
-    answer_calls = prompts * len(engines or signatures) * repeats
-    judge_calls = answer_calls if protocol.get("use_judge") else 0
-    search_calls = answer_calls if protocol.get("mode") == "search" else 0
+    answer_calls = 0 if manual_web else prompts * len(engines or signatures) * repeats
+    judge_calls = collection_tasks if manual_web and protocol.get("use_judge") else answer_calls if protocol.get("use_judge") else 0
+    search_calls = 0 if manual_web else answer_calls if protocol.get("mode") == "search" else 0
     multiplier = 1 + retries
     by_engine = []
     totals = {"base": 0.0, "max": 0.0}
     currencies = set()
-    unknown_components = []
+    unknown_components = ["judge:execution_snapshot"] if manual_web and protocol.get("use_judge") and not judge_engine else []
     estimated_input = 0
     estimated_output = 0
-    for index, engine in enumerate(engines):
+    for engine, signature in cost_engines:
+        if not engine:
+            continue
         rule = rule_for(engine)
-        signature = signatures[index] if index < len(signatures) else engine
-        calls = prompts * repeats
+        calls = collection_tasks if manual_web else prompts * repeats
         parts = []
         for scale, key in ((1, "base"), (multiplier, "max")):
             answer_usage = {
                 "prompt_tokens": calls * scale * int(rule.get("estimated_input_tokens", 1200)),
-                "completion_tokens": calls * scale * int(rule.get("estimated_output_tokens", protocol.get("max_tokens", 700))),
+                "completion_tokens": calls * scale * int(rule.get("estimated_output_tokens") or (protocol.get("judge_execution") or {}).get("max_tokens") or protocol.get("max_tokens") or 700),
             }
-            operations = [("answer", answer_usage)]
+            operations = [] if manual_web else [("answer", answer_usage)]
             if protocol.get("use_judge"):
                 operations.append(("judge", {
                     "prompt_tokens": calls * scale * JUDGE_INPUT_TOKENS,
                     "completion_tokens": calls * scale * JUDGE_OUTPUT_TOKENS,
                 }))
-            if protocol.get("mode") == "search":
+            if not manual_web and protocol.get("mode") == "search":
                 operations.append(("search", {"search_calls": calls * scale}))
             for operation, usage in operations:
                 amount, currency, missing = quote(rule, operation, usage)
@@ -122,8 +128,9 @@ def estimate_wave(conn, wave: dict) -> dict:
             "currency": rule_for(engine).get("currency", "CNY"),
             "unknown_components": sorted({item for part in parts for item in part["missing"]}),
         })
-        estimated_input += calls * int(rule.get("estimated_input_tokens", 1200))
-        estimated_output += calls * int(rule.get("estimated_output_tokens", protocol.get("max_tokens", 700)))
+        if not manual_web:
+            estimated_input += calls * int(rule.get("estimated_input_tokens", 1200))
+            estimated_output += calls * int(rule.get("estimated_output_tokens") or protocol.get("max_tokens") or 700)
         if protocol.get("use_judge"):
             estimated_input += calls * JUDGE_INPUT_TOKENS
             estimated_output += calls * JUDGE_OUTPUT_TOKENS
@@ -133,6 +140,7 @@ def estimate_wave(conn, wave: dict) -> dict:
         "prompt_items": prompts,
         "engines": len(engines or signatures),
         "repeats": repeats,
+        "collection_tasks": collection_tasks,
         "answer_calls": answer_calls,
         "judge_calls": judge_calls,
         "search_calls": search_calls,
@@ -151,7 +159,8 @@ def estimate_wave(conn, wave: dict) -> dict:
         "mixed_currencies": len(currencies) > 1,
         "by_engine": by_engine,
         "blocking": False,
-        "note": "调用次数区分基础预估与安全重试上限；token 和金额为启发式预估，不是厂商账单或绝对费用上限。",
+        "note": ("人工采集不产生 Provider 回答或 Search 调用；仅独立 Judge 计入外部调用与费用。token 和金额为启发式预估，不是厂商账单。"
+                 if manual_web else "调用次数区分基础预估与安全重试上限；token 和金额为启发式预估，不是厂商账单或绝对费用上限。"),
     }
 
 

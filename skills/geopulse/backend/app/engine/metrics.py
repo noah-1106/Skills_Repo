@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 DEPTH_RANK = {"absent": 0, "mentioned": 1, "described": 2, "recommended": 3}
@@ -192,6 +192,17 @@ def calculate_metrics(samples: list[dict], primary_id: int, stats: dict | None =
         "pairs": pairs,
         "limitations": _limitations(samples, groups, modes, stats),
     }
+    if any(sample.get("measurement_target") == "consumer_web" for sample in samples):
+        web_samples = [sample for sample in samples if sample.get("measurement_target") == "consumer_web"]
+        web_valid = [sample for sample in valid if sample.get("measurement_target") == "consumer_web"]
+        result["quality"].update({
+            "awaiting_collection": sum(sample.get("status") == "awaiting_collection" for sample in web_samples),
+            "collection_status_counts": dict(Counter(sample.get("collection_status") or "missing" for sample in web_samples)),
+            "collection_failure_counts": dict(Counter(sample["collection_failure_type"] for sample in web_samples if sample.get("collection_failure_type"))),
+            "retrieval_status_counts": dict(Counter(sample.get("retrieval_status") or "unknown" for sample in web_samples)),
+            "evidence_coverage": ratio(sum(bool(sample.get("evidence_complete")) for sample in web_valid), len(web_valid), stats),
+        })
+    result["measurement_targets"] = sorted({sample.get("measurement_target") or "provider_api" for sample in samples})
     if modes == ["search"]:
         result["citation_rate"] = ratio(cited_count, len(valid), stats)
     else:

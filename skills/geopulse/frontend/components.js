@@ -9,7 +9,7 @@ export function h(tag, attrs = {}, ...children) {
     else if (key === "value") node.value = value;
     else if (key === "checked" || key === "selected" || key === "disabled" || key === "hidden" || key === "required" || key === "multiple" || key === "readonly") node[key] = Boolean(value);
     else if (key === "colspan") node.colSpan = value;
-    else node.setAttribute(key, value === true ? "" : String(value));
+    else node.setAttribute(key, value === true && !key.startsWith("aria-") ? "" : String(value));
   });
   const append = (child) => {
     if (child === undefined || child === null || child === false) return;
@@ -27,7 +27,8 @@ export const pct = (value) => value === undefined || value === null || value ===
 
 export const labels = {
   draft: "草稿", reviewing: "审核中", frozen: "已冻结", retired: "已退役",
-  planned: "待执行", queued: "排队中", running: "执行中", judging: "判定中",
+  planned: "待执行", queued: "排队中", running: "执行中", judging: "判定中", awaiting_collection: "待人工采集",
+  collecting: "采集中", review_pending: "待提交复核", recollect_required: "需要重采", completed: "已完成",
   done: "已完成", partial: "部分完成", failed: "失败", cancelled: "已取消", succeeded: "成功",
   data_ready: "数据就绪", data_ready_with_warnings: "数据有警告", analyzed: "已分析", closed: "已关闭",
   candidate: "待确认候选", eligibility_pending: "适用性审核中", confirmed: "已确认", rejected: "已排除",
@@ -87,10 +88,25 @@ export function errorState(error, retry) {
 export function metric(labelText, metricData, options = {}) {
   const limited = metricData?.limited;
   const hasRatio = metricData && metricData.value !== null && metricData.value !== undefined;
+  const rawValues = [metricData?.value, metricData?.ci_low, metricData?.ci_high];
+  const values = rawValues.map(Number);
+  const hasInterval = Boolean(metricData && Number(metricData.n) > 0
+    && rawValues.every((value) => value !== null && value !== undefined && value !== "") && values.every(Number.isFinite)
+    && values[1] >= 0 && values[2] <= 100 && values[1] <= values[2] && values[0] >= 0 && values[0] <= 100);
+  const track = hasInterval ? h("div", {
+    class: "wilson-track", "aria-hidden": "true",
+    style: `--interval-start:${values[1]}%;--interval-width:${Math.max(values[2] - values[1], .35)}%;--point:${values[0]}%`,
+  }, h("span", { class: "wilson-interval" }), h("span", { class: "wilson-point" })) : null;
+  const count = metricData ? `${metricData.hits ?? "—"}/${metricData.n ?? "—"}` : "";
   return h("div", { class: `metric-block${limited ? " limited" : ""}` },
     h("span", { class: "metric-label" }, labelText),
-    h("strong", { class: "metric-value num" }, limited ? `${metricData.hits}/${metricData.n}` : hasRatio ? pct(metricData.value) : "—"),
-    h("small", {}, metricData ? `${limited ? `${pct(metricData.value)} · ` : `${metricData.hits}/${metricData.n} · `}Wilson ${pct(metricData.ci_low)}–${pct(metricData.ci_high)}${limited ? " · 小样本仅看方向" : ""}` : options.empty || "尚无有效样本"));
+    h("strong", { class: "metric-value num" }, limited ? count : hasRatio ? pct(metricData.value) : "—"),
+    track,
+    metricData ? h("small", { class: "metric-evidence" },
+      h("span", { class: "num" }, limited ? `点估计 ${pct(metricData.value)}` : `${count} 个有效样本`),
+      h("span", { class: "metric-range-text num" }, `Wilson ${pct(metricData.ci_low)}–${pct(metricData.ci_high)}`),
+      limited ? h("span", { class: "limited-note" }, "小样本仅看方向") : null)
+      : h("small", { class: "metric-evidence" }, options.empty || "尚无有效样本"));
 }
 
 export function field(labelText, control, help = "", full = false) {

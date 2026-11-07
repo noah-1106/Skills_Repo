@@ -51,29 +51,34 @@ function healthText(value) {
 function renderEngines(root, ctx, engines) {
   const add = ctx.role === "admin" ? h("button", { class: "button", onClick: () => engineDialog(ctx) }, "新增引擎") : null;
   const unhealthy = engines.filter((engine) => engine.health_status?.startsWith("unhealthy")).length;
+  const providers = engines.filter((engine) => engine.kind !== "manual_web" && engine.enabled).length;
+  const webTargets = engines.filter((engine) => engine.kind === "manual_web" && engine.enabled).length;
   root.append(h("div", { class: `inline-panel${unhealthy ? " warning-panel" : " emphasis"}` },
-    h("h2", {}, unhealthy ? `${unhealthy} 个引擎健康检查异常` : `${engines.filter((engine) => engine.enabled).length} 个引擎可用于新测量`),
-    h("p", { class: "muted" }, "这里的结果均来自 Provider API，不代表 Kimi App 或其他消费者产品。冻结 Wave 后，编辑当前配置不会改写历史执行口径。")));
-  root.append(section("引擎配置", "密钥单独保存在 0600 secret store；页面与导出均不回显密钥", dataTable(
-    ["引擎", "模型与接口", "测量口径", "最近健康检查", "状态", "操作"], engines.map((engine) => [
-      h("div", {}, h("div", { class: "cell-title" }, engine.name), h("span", { class: "cell-sub" }, `${engine.vendor} · ${engine.has_api_key ? "密钥已配置" : engine.kind === "demo" ? "本地演示" : "缺少密钥"}`)),
-      h("div", {}, engine.model || "—", h("span", { class: "cell-sub" }, `${engine.kind} · ${engine.base_url || "本地"}`)),
-      h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" ? h("span", { class: "cell-sub" }, "Search Basic + Chat；Search 失败不降级") : null),
-      h("div", {}, healthText(engine.health_status), engine.health_status ? h("span", { class: "cell-sub" }, "结果保存在当前配置，不改变历史 Run") : null),
-      badge(engine.enabled ? "enabled" : "disabled", engine.enabled ? "success" : "neutral"),
-      ctx.role === "admin" ? h("div", { class: "button-group" },
-        h("button", { class: "button small-button secondary", onClick: () => engineDialog(ctx, engine) }, "编辑"),
-        h("button", { class: "button small-button", onClick: () => healthCheck(ctx, engine) }, engine.kind === "demo" ? "检查演示引擎" : "预估并健康检查")) : h("span", { class: "muted" }, "只读"),
-    ])), [add]));
+    h("h2", {}, unhealthy ? `${unhealthy} 个 Provider 健康检查异常` : `${providers} 个 Provider · ${webTargets} 个人工 Web 目标可用于新测量`),
+    h("p", { class: "muted" }, "Provider API 与人工 Consumer Web 是两种独立测量口径。人工目标只保存 HTTPS 产品入口，不保存账号、Cookie、密码或 Token，也不执行网页自动化。冻结 Wave 后，编辑配置不会改写历史协议。")));
+  root.append(section("测量目标配置", "Provider 密钥单独保存在 0600 secret store；人工 Web 目标不配置密钥、价格或健康检查", dataTable(
+    ["目标", "模型或产品入口", "测量口径", "连接状态", "状态", "操作"], engines.map((engine) => {
+      const manual = engine.kind === "manual_web";
+      return [
+        h("div", {}, h("div", { class: "cell-title" }, engine.name), h("span", { class: "cell-sub" }, `${engine.vendor} · ${manual ? "人工采集" : engine.has_api_key ? "密钥已配置" : engine.kind === "demo" ? "本地演示" : "缺少密钥"}`)),
+        h("div", {}, manual ? engine.base_url : engine.model || "—", h("span", { class: "cell-sub" }, `${engine.kind} · ${manual ? "HTTPS 产品入口" : engine.base_url || "本地"}`)),
+        h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" ? h("span", { class: "cell-sub" }, "Search Basic + Chat；Search 失败不降级") : manual ? h("span", { class: "cell-sub" }, "由人工在页面观察并提交证据") : null),
+        manual ? h("div", {}, "不适用", h("span", { class: "cell-sub" }, "无 Provider 健康检查")) : h("div", {}, healthText(engine.health_status), engine.health_status ? h("span", { class: "cell-sub" }, "结果保存在当前配置，不改变历史 Run") : null),
+        badge(engine.enabled ? "enabled" : "disabled", engine.enabled ? "success" : "neutral"),
+        ctx.role === "admin" ? h("div", { class: "button-group" },
+          h("button", { class: "button small-button secondary", onClick: () => engineDialog(ctx, engine) }, "编辑"),
+          manual ? null : h("button", { class: "button small-button", onClick: () => healthCheck(ctx, engine) }, engine.kind === "demo" ? "检查演示引擎" : "预估并健康检查")) : h("span", { class: "muted" }, "只读"),
+      ];
+    })), [add]));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "连接与测量边界"), h("div", {},
-    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 检索使用 POST /v1/tools/search 的 text_query，再交给 Chat 回答。网页/App 自动化不在当前采集范围内。"))));
+    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 检索使用 POST /v1/tools/search 的 text_query，再交给 Chat 回答。人工 Web 仅支持人工辅助采集；授权浏览器 Collector、持久登录、DOM 自动提取、验证码处理和多平台爬虫不在当前范围内。"))));
 }
 
 function engineDialog(ctx, engine) {
   const rule = engine?.cost_rule || {};
   const name = input(engine?.name || "", { required: true });
   const vendor = input(engine?.vendor || "", { required: true, placeholder: "DeepSeek / Moonshot / GeoPulse" });
-  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }], engine?.kind || "openai_compat");
+  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }, { value: "manual_web", label: "人工 Consumer Web（网页观察）" }], engine?.kind || "openai_compat");
   const mode = select([{ value: "memory", label: "memory · 记忆态" }, { value: "search", label: "search · 检索态" }], engine?.mode || "memory");
   const model = input(engine?.model || "", { placeholder: "按厂商账号可用模型填写" });
   const baseUrl = input(engine?.base_url || "", { placeholder: "https://platform.example.com/v1" });
@@ -90,21 +95,35 @@ function engineDialog(ctx, engine) {
   const estimatedInput = input(rule.estimated_input_tokens ?? 1200, { type: "number", min: 1, step: 1 });
   const estimatedOutput = input(rule.estimated_output_tokens ?? 700, { type: "number", min: 1, step: 1 });
   const searchField = field("Search 单次调用价", searchPrice, "Kimi Search 模式需要；未填写时成本明确标为未知");
+  const modelField = field("模型 ID", model);
+  const baseUrlField = field("Base URL", baseUrl, "生产环境强制 HTTPS");
+  const apiKeyField = field("API Key", apiKey);
+  const timeoutField = field("超时（秒）", timeout);
+  const rateField = field("每引擎速率（请求/秒）", rate);
+  const pricing = h("details", { class: "advanced", open: Boolean(engine && Object.keys(rule).length) }, h("summary", {}, "价格与调用预估"), h("div", {},
+    h("p", { class: "muted small" }, "金额按厂商真实 usage 与以下手工价格估算，不是厂商账单。留空表示未知，不会按零成本处理。"),
+    h("div", { class: "form-grid" }, field("币种", currency), searchField,
+      field("回答输入价 / 百万 tokens", inputPrice), field("回答输出价 / 百万 tokens", outputPrice),
+      field("Judge 输入价 / 百万 tokens", judgeInput), field("Judge 输出价 / 百万 tokens", judgeOutput),
+      field("预估输入 tokens / 次", estimatedInput), field("预估输出 tokens / 次", estimatedOutput))));
+  const boundaryNote = h("p", { class: "muted small" });
   const syncKind = () => {
+    const manual = kind.value === "manual_web";
     mode.value = kind.value === "kimi_search" ? "search" : "memory";
-    mode.disabled = true;
+    mode.disabled = !manual;
     searchField.hidden = kind.value !== "kimi_search";
+    [modelField, apiKeyField, timeoutField, rateField, pricing].forEach((node) => { node.hidden = manual; });
+    baseUrlField.querySelector("label").textContent = manual ? "HTTPS 产品入口" : "Base URL";
+    baseUrl.placeholder = manual ? "https://consumer.example.com/chat" : "https://platform.example.com/v1";
+    boundaryNote.textContent = manual
+      ? "人工 Web 只保存产品入口和启用状态，不保存 API Key、Cookie、密码或 Token，不提供 Provider 价格、限流或健康检查。Provider 与人工目标不能互相改型。"
+      : "当前 Provider 配置仅用于 provider_api。编辑价格不会改变已冻结 Wave 的预估与历史成本。";
   };
-  const form = h("form", {}, h("div", { class: "form-grid" }, field("配置名称", name), field("厂商", vendor), field("Provider 类型", kind), field("测量模式", mode),
-    field("模型 ID", model), field("Base URL", baseUrl, "生产环境强制 HTTPS"), field("API Key", apiKey), field("超时（秒）", timeout), field("每引擎速率（请求/秒）", rate)), enabled.node,
-    h("details", { class: "advanced", open: Boolean(engine && Object.keys(rule).length) }, h("summary", {}, "价格与调用预估"), h("div", {},
-      h("p", { class: "muted small" }, "金额按厂商真实 usage 与以下手工价格估算，不是厂商账单。留空表示未知，不会按零成本处理。"),
-      h("div", { class: "form-grid" }, field("币种", currency), searchField,
-        field("回答输入价 / 百万 tokens", inputPrice), field("回答输出价 / 百万 tokens", outputPrice),
-        field("Judge 输入价 / 百万 tokens", judgeInput), field("Judge 输出价 / 百万 tokens", judgeOutput),
-        field("预估输入 tokens / 次", estimatedInput), field("预估输出 tokens / 次", estimatedOutput)))),
-    h("p", { class: "muted small" }, "当前仅允许 provider_api 合法采集。编辑价格不会改变已冻结 Wave 的预估与历史成本。"),
-    h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存引擎配置")));
+  const form = h("form", {}, h("div", { class: "form-grid" }, field("配置名称", name), field("厂商 / 产品", vendor), field("目标类型", kind), field("测量模式", mode),
+    modelField, baseUrlField, apiKeyField, timeoutField, rateField), enabled.node, pricing, boundaryNote,
+    h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存测量目标")));
+  if (engine?.kind === "manual_web") kind.disabled = true;
+  else if (engine) kind.querySelector("option[value='manual_web']").disabled = true;
   const modal = drawer(engine ? `编辑引擎 · ${engine.name}` : "新增引擎", form, { wide: true });
   kind.addEventListener("change", syncKind); syncKind();
   form.addEventListener("submit", async (event) => {
@@ -116,8 +135,10 @@ function engineDialog(ctx, engine) {
       if (control.value !== "") costRule[key] = numberOrNull(control);
     });
     try {
-      const payload = { name: name.value, vendor: vendor.value, kind: kind.value, mode: mode.value, model: model.value, base_url: baseUrl.value,
-        api_key: apiKey.value || (engine ? "__KEEP__" : ""), measurement_target: "provider_api", timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: costRule };
+      const manual = kind.value === "manual_web";
+      const payload = { name: name.value, vendor: vendor.value, kind: kind.value, mode: mode.value, model: manual ? "" : model.value, base_url: baseUrl.value,
+        api_key: manual ? "" : apiKey.value || (engine ? "__KEEP__" : ""), measurement_target: manual ? "consumer_web" : "provider_api",
+        timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: manual ? {} : costRule };
       await (engine ? api.put(`/api/projects/${ctx.project.id}/engines/${engine.id}`, payload) : api.post(`/api/projects/${ctx.project.id}/engines`, payload));
       modal.close(); toast("引擎配置已保存，密钥未回显"); ctx.refresh();
     } catch (error) { formError(form, error); }
@@ -173,6 +194,7 @@ function membershipDialog(ctx, users) {
 }
 
 function renderSchedules(root, ctx, waves, schedules, alerts) {
+  const schedulableWaves = waves.filter((wave) => wave.protocol.measurement_target !== "consumer_web");
   const blocked = schedules.filter((schedule) => schedule.status === "blocked").length;
   root.append(h("div", { class: `inline-panel${blocked || alerts.length ? " warning-panel" : " emphasis"}` },
     h("h2", {}, blocked ? `${blocked} 个调度等待管理员处理` : alerts.length ? `${alerts.length} 条开放告警需要核查` : "当前没有阻塞的调度"),
@@ -184,8 +206,8 @@ function renderSchedules(root, ctx, waves, schedules, alerts) {
       schedule.recurrence_days ? `每 ${schedule.recurrence_days} 天` : "单次",
       badge(schedule.status === "pending" ? "planned" : schedule.status),
       schedule.last_run_id ? `Run #${schedule.last_run_id}` : h("span", { class: "muted" }, "尚未执行"),
-      ctx.role === "admin" ? scheduleControls(ctx, schedule, waves) : h("span", { class: "muted" }, "只读"),
-    ]), "还没有复测安排。"), ctx.role === "admin" ? [h("button", { class: "button", disabled: !waves.length, onClick: () => scheduleDialog(ctx, waves) }, "安排复测")] : []));
+      ctx.role === "admin" ? scheduleControls(ctx, schedule, schedulableWaves) : h("span", { class: "muted" }, "只读"),
+    ]), "还没有复测安排。"), ctx.role === "admin" ? [h("button", { class: "button", disabled: !schedulableWaves.length, onClick: () => scheduleDialog(ctx, schedulableWaves) }, "安排复测")] : []));
   root.append(section("开放告警", "告警只提示人工核查，不自动归因为 GEO 策略效果", dataTable(["级别", "内容", "时间", "操作"], alerts.map((alert) => [
     badge(alert.severity, alert.severity === "critical" ? "danger" : "warning"),
     h("div", {}, alert.message, h("span", { class: "cell-sub" }, `${label(alert.kind)} · ${label(alert.status)}`)), formatDate(alert.created_at, ctx.project.timezone),

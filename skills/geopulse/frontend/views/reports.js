@@ -16,9 +16,9 @@ export async function renderReports(root, ctx) {
     target: current.protocol.measurement_target, repeats: current.protocol.repeats, demo: current.protocol.engine_signature.every((engine) => engine.kind === "demo") });
   clear(root);
   root.append(pageHead("对比与报告", "先确认两次测量能否严格比较，再阅读变化。报告快照不可变，自动检查通过后仍需管理员逐步审批。"));
-  const currentTab = ctx.params.get("tab") || (selectedReportId ? "delivery" : "compare");
+  const currentTab = ctx.params.get("tab") || (selectedReportId || ctx.params.has("wave") ? "delivery" : "compare");
   const tablist = tabs([{ value: "compare", label: "变化对比" }, { value: "delivery", label: `报告交付 (${reportData.items.length})` }], currentTab,
-    (tab) => ctx.navigate("reports", { tab }));
+    (tab) => ctx.navigate("reports", { tab, ...(tab === "delivery" && ctx.params.get("wave") ? { wave: ctx.params.get("wave") } : {}) }));
   root.append(tablist);
   const panel = h("div", {});
   if (currentTab === "compare") {
@@ -27,9 +27,9 @@ export async function renderReports(root, ctx) {
     panel.append(section("报告版本", "选择当前版本处理审批与导出；每次创建都会生成新的数据快照和 SHA-256", dataTable(
       ["版本", "Wave", "当前审批节点", "创建时间", "操作"], reportData.items.map((item) => [
         `v${item.version} · #${item.id}`, item.wave_ids.join(" → "), badge(item.approval_status), formatDate(item.created_at, ctx.project.timezone),
-        h("button", { class: "table-link", onClick: () => ctx.navigate("reports", { tab: "delivery", report: item.id }) }, "打开报告"),
+        h("button", { class: "table-link", "data-report-id": item.id, onClick: () => ctx.navigate("reports", { tab: "delivery", report: item.id }) }, "打开报告"),
       ]), "还没有报告。选择单个诊断 Wave 或基线 + 复测两个 Wave 创建快照。"),
-      [["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button", disabled: !waveData.items.length, onClick: () => createReportDialog(ctx, waveData.items) }, "创建报告快照") : null]));
+      [["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button", "data-testid": "create-report", disabled: !waveData.items.length, onClick: () => createReportDialog(ctx, waveData.items) }, "创建报告快照") : null]));
     if (report) renderReportDetail(panel, ctx, report);
     else if (!reportData.items.length) panel.append(emptyState("从正式测量创建交付快照", "报告会固定当时的数据、证据和口径。后续审批不会改写数据快照。", null));
   }
@@ -78,9 +78,15 @@ function renderComparison(root, ctx, waves, events) {
       await nextFrame();
       if (chartNode && window.echarts && ctx.isCurrent()) {
         const chart = window.echarts.init(chartNode);
-        chart.setOption({ color: ["#8a9b93", "#116f61"], tooltip: { trigger: "axis" }, legend: { data: ["基线", "复测"] },
-          grid: { left: 48, right: 20, top: 45, bottom: 50 }, xAxis: { type: "category", data: Object.keys(result.delta).map((key) => metricNames[key] || key), axisLabel: { interval: 0 } },
-          yAxis: { type: "value", max: 100, name: "%" }, series: ["baseline", "current"].map((key, index) => ({ name: index ? "复测" : "基线", type: "bar", data: Object.values(result.delta).map((row) => row[key].value) })) });
+        const rows = Object.values(result.delta);
+        const names = Object.keys(result.delta).map((key) => metricNames[key] || key);
+        chart.setOption({ color: ["#89999F", "#00747B"], aria: { enabled: true },
+          tooltip: { trigger: "item", formatter: (params) => `${params.seriesName}<br>${params.name}：${pct(params.value[0])}` },
+          legend: { data: ["基线", "复测"] }, grid: { left: 100, right: 30, top: 45, bottom: 50 },
+          xAxis: { type: "value", max: 100, name: "%", splitLine: { lineStyle: { color: "#D4DEE1" } } },
+          yAxis: { type: "category", data: names, inverse: true, axisTick: { show: false }, axisLine: { show: false } },
+          series: ["baseline", "current"].map((key, index) => ({ name: index ? "复测" : "基线", type: "scatter", symbolSize: index ? 13 : 11,
+            data: rows.map((row, rowIndex) => ({ name: names[rowIndex], value: [row[key].value, rowIndex] })) })) });
         const resize = () => chart.resize(); window.addEventListener("resize", resize);
         ctx.onCleanup(() => { window.removeEventListener("resize", resize); chart.dispose(); });
       }
@@ -90,8 +96,13 @@ function renderComparison(root, ctx, waves, events) {
 }
 
 function createReportDialog(ctx, waves) {
-  const current = select(waves.map((wave) => ({ value: wave.id, label: `${wave.label}${wave.official_run_id ? ` · Run #${wave.official_run_id}` : " · 未指定正式 Run"}` })), ctx.params.get("wave") || waves[0]?.id);
-  const baseline = select([{ value: "", label: "不对比，仅诊断当前 Wave" }, ...waves.map((wave) => ({ value: wave.id, label: wave.label }))]);
+  const waveOptions = waves.map((wave) => ({
+    value: wave.id,
+    label: `#${wave.id} · ${wave.label} · ${formatDate(wave.created_at, ctx.project.timezone)} · ${wave.official_run_id ? `正式 Run #${wave.official_run_id}` : "未执行 · 仅可创建受阻草稿"}`,
+  }));
+  const latestOfficial = waves.find((wave) => wave.official_run_id);
+  const current = select(waveOptions, ctx.params.get("wave") || latestOfficial?.id || waves[0]?.id, { "data-testid": "report-current-wave" });
+  const baseline = select([{ value: "", label: "不对比，仅诊断当前 Wave" }, ...waveOptions], "", { "data-testid": "report-baseline-wave" });
   const form = h("form", {}, field("当前 Wave", current), field("可选基线 Wave", baseline),
     h("p", { class: "muted" }, "未指定正式 run 或没有有效样本时，可以保存待处理草稿，但发布闸门会阻止审批。不同口径不会生成严格对比结论。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "创建不可变快照")));
@@ -109,8 +120,8 @@ function renderReportDetail(root, ctx, report) {
   const snapshot = report.snapshot;
   const latest = snapshot.waves[snapshot.waves.length - 1];
   const next = { draft: "data_checked", data_checked: "strategy_reviewed", strategy_reviewed: "client_approved", client_approved: "sent" }[report.approval_status];
-  const panel = h("section", { class: "work-section" }, h("div", { class: "inline-panel emphasis" },
-    h("div", { class: "section-head" }, h("div", {}, h("h2", {}, `报告 v${report.version} · ${label(report.approval_status)}`), h("p", {}, `快照 ${report.data_snapshot_hash.slice(0, 16)}… · ${snapshot.generated_at}`)),
+  const panel = h("section", { class: "work-section report-document" }, h("article", { class: "inline-panel report-sheet" },
+    h("div", { class: "section-head" }, h("div", {}, h("h2", {}, `报告 v${report.version} · ${label(report.approval_status)}`), h("p", {}, `Wave #${latest.wave.id} · ${latest.run ? `正式 Run #${latest.run.id}` : "未指定正式 Run"} · 快照 ${report.data_snapshot_hash.slice(0, 16)}… · ${snapshot.generated_at}`)),
       h("div", { class: "button-group" },
         h("button", { class: "button secondary", onClick: () => previewReport(ctx, report, "client") }, "预览客户版"),
         ["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button secondary", onClick: () => previewReport(ctx, report, "internal") }, "预览内部版") : null,
@@ -131,7 +142,7 @@ function renderReportDetail(root, ctx, report) {
 }
 
 function previewReport(ctx, report, variant) {
-  const iframe = h("iframe", { src: `/api/projects/${ctx.project.id}/reports/${report.id}/export?variant=${variant}&format=html`, title: `${variant === "client" ? "客户" : "内部"}版报告预览`, sandbox: "", style: "width:100%;height:75vh;border:1px solid #d5ddd7;background:white" });
+  const iframe = h("iframe", { src: `/api/projects/${ctx.project.id}/reports/${report.id}/export?variant=${variant}&format=html`, title: `${variant === "client" ? "客户" : "内部"}版报告预览`, sandbox: "", style: "width:100%;height:75vh;border:1px solid #D4DEE1;border-radius:8px;background:white" });
   drawer(`${variant === "client" ? "客户" : "内部"}版 · v${report.version}`, iframe, { wide: true });
 }
 
