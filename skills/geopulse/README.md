@@ -1,5 +1,7 @@
 # GeoPulse v2.3
 
+> **主开发仓库已独立迁移至 [noah-1106/geopulse](https://github.com/noah-1106/geopulse)（私有）。** 当前目录保留为 Skills_Repo 中的 v2.3 分发快照；后续功能开发、Issue、CI 和 Release 以独立仓库为准。
+
 GeoPulse 是一个自托管的 GEO 客户交付工作台：冻结问题与实体口径，执行可恢复的 Provider API、人工 Consumer Web 或授权浏览器 Consumer Web 测量，复核原始证据，再进行同口径比较、机会行动和报告审批。
 
 它不是“排名承诺”工具。Provider API、人工网页和授权浏览器观察始终分开记账和比较，API 结果不会冒充 Kimi App、DeepSeek Web、ChatGPT 网页等消费者产品的实际观察。
