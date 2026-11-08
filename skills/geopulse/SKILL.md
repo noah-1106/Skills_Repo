@@ -5,7 +5,7 @@ description: 自托管的多客户 GEO 交付工作台。冻结问题与实体�
 
 # GeoPulse v2 — 多客户 GEO 交付工作台
 
-> **主开发仓库：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（私有）。** 本目录是 Skills_Repo 的 v2.3 分发快照；新功能、Issue、CI 和 Release 以独立仓库为准。
+> **主开发仓库：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）。** 本目录是 Skills_Repo 的 v2.3 分发快照；新功能、Issue、CI 和 Release 以独立仓库为准。
 
 ## 何时使用
 

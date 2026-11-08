@@ -43,7 +43,7 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **限制**：图片 ≤10MB；视频 ≤50MB；国外 URL 源智谱服务端拉取易失败（加 `--download` 本地下载绕过）；并发约 5 QPS；空回答时加大 --max-tokens（推理占额）
 
 #### geopulse
-- **主开发仓库 / Primary repository**：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（私有）；`skills/geopulse` 保留 v2.3 分发快照，后续开发、Issue、CI 和 Release 以独立仓库为准
+- **主开发仓库 / Primary repository**：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）；`skills/geopulse` 保留 v2.3 分发快照，后续开发、Issue、CI 和 Release 以独立仓库为准
 - **技能名称 / Name**：自托管多客户 GEO 交付工作台 / Self-hosted Multi-client GEO Delivery Workbench
 - **技能描述 / Description**：完整前后端自包含，覆盖问题与实体口径、可恢复 Wave/Run 测量、独立 Judge、严格同口径比较、机会与七步 Action、不可变报告，以及权限、调度、成本和备份。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 和授权 DeepSeek/Kimi 网页采集；API 与消费端观察始终分开
 - **当前版本 / Version**：2.3.0
