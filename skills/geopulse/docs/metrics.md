@@ -8,7 +8,7 @@
 - `raw_text` 非空；
 - Provider 未标为空回答或截断回答。
 
-人工 Consumer Web 使用 `succeeded_nonempty_evidence_v1`：除成功处理和非空原文外，还必须完成不可变提交，并保留通过 bytes/hash/size/magic 校验的有效截图及一致的实际页面/冻结上下文。只有完整提交且处理成功才持久化 `valid_sample=1`。
+Consumer Web 使用 `succeeded_nonempty_evidence_v1`：除成功处理和非空原文外，还必须完成不可变提交，并保留通过 bytes/hash/size/magic 校验的有效截图及一致的实际页面/冻结上下文。该规则同时适用于人工与授权浏览器采集；自动任务的原文、截图、HTML、引用和上下文必须在同一事务提交。只有完整提交且处理成功才持久化 `valid_sample=1`。
 
 失败、取消、空、截断、排队和执行中样本不进入 `V`，也不能解释成“未提及”。无有效样本时页面和报告写“无法诊断”，而不是输出业务上的 0%。
 
@@ -169,7 +169,7 @@ Citation Rate = 主品牌 confirmed mentioned 且关联至少一个白名单 cit
 
 Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用率”，不能显示虚构的 0% 或引用 URL。
 
-来源结构按 `source_type × domain × entity_role` 汇总引用数和去重来源数。分类支持官网、配置域名类别（如百科/UGC）和其他。Provider 引用为 `origin=provider_returned`；人工实际看到的页面引用为 `origin=manual_page`，只记录 URL、标题和卡片文本，不自动抓取或补造最终 URL。两种来源不会在 UI 或报告中混称。
+来源结构按 `source_type × domain × entity_role` 汇总引用数和去重来源数。分类支持官网、配置域名类别（如百科/UGC）和其他。Provider 引用为 `origin=provider_returned`；人工实际看到的页面引用为 `origin=manual_page`，授权浏览器从当前回答区域提取的引用为 `origin=browser_page`。两类页面引用只记录页面实际展示的 URL、标题和卡片文本，不自动访问 URL，也不宣称已核验正文与主张的支持关系。报告统一称为 Consumer Web 页面引用，同时保留冻结采集方法，不与 Provider 来源混称。
 
 ## 7. 数据质量
 
@@ -185,11 +185,11 @@ Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用�
 | `pending_review_answers` | 任一当前 observation 待复核的回答数 |
 | `measurement_modes` | 当前有效回答的 memory/search 集合 |
 | `measurement_targets` | 当前有效回答的 provider_api/consumer_web 集合 |
-| `awaiting_collection` | 尚待人工提交的任务数，不进入有效分母 |
+| `awaiting_collection` | 尚待人工提交或授权浏览器采集的任务数，不进入有效分母 |
 | `collection_status_counts` | 待采集、采集中、待提交复核、完成、失败、需重采的计数 |
 | `collection_failure_counts` | 验证码、登录失效、空、截断、错误页、流式中断等失败计数 |
-| `retrieval_status_counts` | 人工记录的检索 on/off/unavailable/unknown 计数 |
-| `evidence_coverage` | 具有完整人工证据的有效样本数 / 人工有效样本数 |
+| `retrieval_status_counts` | 人工记录或浏览器按冻结联网状态提取的 on/off/unavailable/unknown 计数 |
+| `evidence_coverage` | 具有完整 Consumer Web 证据的有效样本数 / Consumer Web 有效样本数 |
 | `is_demo` | 全部有效回答来自 demo 引擎 |
 
 只要样本中含 demo，`limitations` 就明确“包含演示引擎，结果不代表真实 AI 表现”。不同模式不能合并成正常汇总。
@@ -202,7 +202,7 @@ Memory 模式返回 `citation_rate=null`，页面明确“不计算来源引用�
 - engine signature、repeats，以及归一化后的按回答引擎 `answer_execution` / `judge_execution` 有效参数；
 - language、market、judge version、`judge_mode`；
 - memory/search、measurement target、`use_judge`；
-- 人工 Web 的 collection protocol、独立 Judge signature；
+- Consumer Web 的 collection protocol、product URL、platform、collection method、browser Driver 和独立 Judge signature；
 - 有效样本定义、stratum weights。
 
 配对键为 `engine_config_id:canonical_intent_id`：

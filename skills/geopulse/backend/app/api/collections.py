@@ -7,11 +7,49 @@ import urllib.parse
 from fastapi import APIRouter, Query, Request, Response
 
 from ..db import transaction
-from ..security import project_context
-from ..services import web_collection
-from .schemas import CollectionDraftIn, CollectionFailureIn
+from ..security import project_context, require_admin
+from ..services import browser_sessions, web_collection
+from .schemas import BrowserResumeIn, BrowserSessionIn, CollectionDraftIn, CollectionFailureIn
 
 router = APIRouter(prefix="/api/projects/{project_id}", tags=["manual-consumer-web"])
+
+
+@router.get("/engines/{engine_id}/browser-sessions")
+def list_browser_sessions(project_id: int, engine_id: int, request: Request):
+    context = require_admin(request, project_id)
+    with transaction() as conn:
+        return {"items": browser_sessions.list_for_engine(conn, context["project"], engine_id)}
+
+
+@router.post("/engines/{engine_id}/browser-sessions")
+def create_browser_session(project_id: int, engine_id: int, payload: BrowserSessionIn, request: Request):
+    context = require_admin(request, project_id)
+    with transaction() as conn:
+        return browser_sessions.create(conn, context["project"], engine_id, payload.driver,
+                                       context["user"]["id"])
+
+
+@router.post("/browser-sessions/{session_id}/verify")
+def verify_browser_session(project_id: int, session_id: int, request: Request):
+    context = require_admin(request, project_id)
+    with transaction() as conn:
+        return browser_sessions.request_verification(conn, context["project"], session_id,
+                                                     context["user"]["id"])
+
+
+@router.post("/browser-sessions/{session_id}/revoke")
+def revoke_browser_session(project_id: int, session_id: int, request: Request):
+    context = require_admin(request, project_id)
+    with transaction() as conn:
+        return browser_sessions.revoke(conn, context["project"], session_id, context["user"]["id"])
+
+
+@router.post("/answers/{answer_id}/collection/resume")
+def resume_browser_collection(project_id: int, answer_id: int, payload: BrowserResumeIn, request: Request):
+    context = require_admin(request, project_id)
+    with transaction() as conn:
+        return browser_sessions.resume_collection(conn, context["project"], answer_id,
+                                                  payload.model_dump(), context["user"]["id"])
 
 
 @router.get("/answers/{answer_id}/collection")

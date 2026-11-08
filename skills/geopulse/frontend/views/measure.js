@@ -4,6 +4,14 @@ import { h, clear, pageHead, section, dataTable, badge, metric, drawer, field, i
 
 const openRunHistories = new Set();
 const isManualWave = (wave) => wave.protocol.measurement_target === "consumer_web";
+const isBrowserWave = (wave) => wave.protocol.collection_protocol?.collection_method === "browser_assisted";
+const driverName = (driver) => driver === "kimi_web" ? "Kimi Web" : "DeepSeek Web";
+const browserPhaseName = (phase) => ({
+  queued: "等待本机采集器", session_check: "检查登录会话", preparing: "准备新会话",
+  submitting: "正在发送问题", waiting: "等待网页回答", extracting: "提取回答与证据",
+  uploading: "保存原始证据", awaiting_user: "需要处理登录或验证码",
+  paused_unknown: "结果不明，等待管理员核对", completed: "采集完成", failed: "采集失败",
+}[phase] || phase || "等待采集");
 const requiresRealConfirmation = (wave) => [
   ...(wave.protocol.engine_signature || []),
   ...(wave.protocol.judge_signature ? [wave.protocol.judge_signature] : []),
@@ -20,7 +28,7 @@ function frozenExecution(protocol) {
     h("p", { class: "muted small" }, `Judge 方式：${protocol.judge_mode === "independent" ? `独立 Judge · ${protocol.judge_signature?.name || "未配置"}` : protocol.judge_mode === "disabled" ? "已关闭" : "各回答引擎兼任 Judge"}。这里只展示非秘密参数摘要。`),
     dataTable(["回答引擎", "回答请求", "Judge 请求"], (protocol.engine_signature || []).map((engine) => [
       engine.name,
-      protocol.measurement_target === "consumer_web" ? "人工页面回答" : executionText(protocol.answer_execution?.[engine.id]),
+      protocol.measurement_target === "consumer_web" ? `${protocol.collection_protocol?.collection_method === "browser_assisted" ? "授权浏览器" : "人工"}页面回答` : executionText(protocol.answer_execution?.[engine.id]),
       executionText(protocol.judge_execution?.[engine.id]),
     ]))));
 }
@@ -30,7 +38,14 @@ export async function renderMeasure(root, ctx) {
     api.get(`/api/projects/${ctx.project.id}/waves`), api.get(`/api/projects/${ctx.project.id}/prompt-sets`), api.get(`/api/projects/${ctx.project.id}/engines`),
   ]);
   const waves = waveData.items;
-  const actions = [["admin", "analyst"].includes(ctx.role) ? h("button", { class: `button${waves.length ? " secondary" : ""}`, onClick: () => waveWizard(ctx, setData.items, engineData.items) }, "新建测量方案") : null];
+  const browserSessions = {};
+  if (ctx.role === "admin") {
+    await Promise.all(engineData.items.filter((engine) => engine.kind === "manual_web").map(async (engine) => {
+      browserSessions[engine.id] = (await api.get(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`)).items;
+    }));
+  }
+  if (!ctx.isCurrent()) return;
+  const actions = [["admin", "analyst"].includes(ctx.role) ? h("button", { class: `button${waves.length ? " secondary" : ""}`, onClick: () => waveWizard(ctx, setData.items, engineData.items, browserSessions) }, "新建测量方案") : null];
   if (!waves.length) {
     clear(root); root.append(pageHead("测量执行", "wave 冻结测量口径，run 记录每一次执行尝试。", actions),
       emptyState("还没有测量方案", "先创建 wave 并检查调用预估；只有确认创建 run 后才会进入执行队列。", null));
@@ -43,6 +58,7 @@ export async function renderMeasure(root, ctx) {
   if (!ctx.isCurrent()) return;
   const protocol = wave.protocol;
   const manual = isManualWave(wave);
+  const browser = isBrowserWave(wave);
   ctx.setProtocol({ promptSet: `ID ${protocol.prompt_set_id} · ${protocol.prompt_set_hash.slice(0, 8)}`, entityVersion: protocol.entity_version,
     engines: protocol.engine_signature.map((engine) => engine.name).join(" / "), mode: protocol.mode,
     target: protocol.measurement_target, repeats: protocol.repeats, n: metrics?.quality?.valid_samples,
@@ -58,19 +74,20 @@ export async function renderMeasure(root, ctx) {
   detail.append(h("section", { class: "inline-panel wave-summary" }, h("div", { class: "section-head" },
     h("div", {}, h("h2", {}, wave.label), h("p", {}, `Wave #${wave.id} · ${label(wave.status)}${wave.official_run_id ? ` · 正式 Run #${wave.official_run_id}` : " · 尚未指定正式 run"}`)),
     h("div", { class: "button-group" },
-      ["admin", "analyst"].includes(ctx.role) ? h("button", { class: `button${active || canSelectOfficial ? " secondary" : ""}`, onClick: () => confirmRun(ctx, wave) }, manual ? "创建人工采集 Run" : wave.runs.length ? "创建重试 Run" : "确认并创建 Run") : null,
+      ["admin", "analyst"].includes(ctx.role) ? h("button", { class: `button${active || canSelectOfficial ? " secondary" : ""}`, onClick: () => confirmRun(ctx, wave) }, browser ? "创建授权采集 Run" : manual ? "创建人工采集 Run" : wave.runs.length ? "创建重试 Run" : "确认并创建 Run") : null,
       wave.official_run_id ? h("a", { class: "button secondary", href: `#/reports?wave=${wave.id}` }, "生成报告") : null)),
     h("dl", { class: "definition-list" },
       h("div", {}, h("dt", {}, "测量目标"), h("dd", {}, `${label(protocol.mode)} · ${label(protocol.measurement_target)}`)),
+      h("div", {}, h("dt", {}, "采集方法"), h("dd", {}, browser ? `授权浏览器 · ${driverName(protocol.collection_protocol.browser_driver)}` : manual ? "人工网页采集" : "Provider API")),
       h("div", {}, h("dt", {}, "问题 / 目标 / 轮次"), h("dd", {}, `${wave.estimate.prompt_items} × ${wave.estimate.engines} × ${protocol.repeats}`)),
-      manual ? h("div", {}, h("dt", {}, "待人工采集任务"), h("dd", { class: "num" }, wave.estimate.collection_tasks)) : null,
+      manual ? h("div", {}, h("dt", {}, browser ? "串行浏览器任务" : "待人工采集任务"), h("dd", { class: "num" }, wave.estimate.collection_tasks)) : null,
       h("div", {}, h("dt", {}, manual ? "独立 Judge 基础 / 重试上限" : "基础 / 安全重试调用"), h("dd", { class: "num" }, `${wave.estimate.total_external_calls} / ${wave.estimate.max_external_calls}`)),
       ["admin", "analyst"].includes(ctx.role) ? h("div", {}, h("dt", {}, "基础 / 含重试费用预估"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知" : `${wave.estimate.estimated_cost} / ${wave.estimate.max_estimated_cost} ${wave.estimate.currency || ""}`)) : null),
     h("p", { class: "muted small" }, wave.estimate.note),
     manual ? h("details", { class: "advanced" }, h("summary", {}, "查看冻结采集协议"), h("div", {},
       h("p", {}, protocol.collection_protocol.product_url),
-      h("p", { class: "muted small" }, `${label(protocol.collection_protocol.surface)} · ${protocol.collection_protocol.page_mode || "默认模式"} · ${protocol.collection_protocol.session_mode === "new" ? "新会话" : "连续会话"} · ${protocol.collection_protocol.language}`),
-      h("p", { class: "muted small" }, `独立 Judge：${protocol.judge_signature?.name || "未启用"}。联网、深度开关、登录状态、上下文清理和追问策略均已冻结；实际提交必须逐项一致。`))) : null,
+      h("p", { class: "muted small" }, `${browser ? `授权浏览器 · ${driverName(protocol.collection_protocol.browser_driver)}` : "人工采集"} · ${label(protocol.collection_protocol.surface)} · ${protocol.collection_protocol.page_mode || "默认模式"} · ${protocol.collection_protocol.session_mode === "new" ? "新会话" : "连续会话"} · ${protocol.collection_protocol.language}`),
+      h("p", { class: "muted small" }, `独立 Judge：${protocol.judge_signature?.name || "未启用"}。联网、深度开关、登录状态、上下文清理和追问策略均已冻结；实际提交必须逐项一致。${browser ? "采集器只访问对应产品，不自动打开页面引用。" : ""}`))) : null,
     frozenExecution(protocol)));
   if (run) {
     const progress = run.progress;
@@ -79,7 +96,8 @@ export async function renderMeasure(root, ctx) {
         active && ["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button danger small-button", onClick: () => cancelRun(ctx, wave, run) }, "取消 Run") : null,
         ["failed", "cancelled", "partial"].includes(run.status) && ctx.role === "admin" ? h("button", { class: "button secondary small-button", onClick: () => retryRun(ctx, run) }, "确认重试失败样本") : null,
         canSelectOfficial ? h("button", { class: "button small-button", onClick: () => selectOfficial(ctx, wave, run) }, "指定为正式 Run") : null,
-        h("a", { class: "button secondary small-button", href: `#/review?run=${run.id}` }, manual ? "采集与复核证据" : "复核证据"))),
+        h("a", { class: "button secondary small-button", href: `#/review?run=${run.id}` }, browser ? "查看采集与证据" : manual ? "采集与复核证据" : "复核证据"))),
+      browser ? browserRunProgress(progress.browser, ctx, run.id) : null,
       h("div", { class: "progress-track", dataset: { runProgress: "" }, role: "progressbar", "aria-valuenow": progress.progress, "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Run 完成进度" }, h("div", { class: "progress-bar", style: `width:${progress.progress}%` })),
       h("div", { class: "progress-meta" }, h("span", { dataset: { progressCount: "" } }, `${progress.finished}/${progress.total} 个样本已结束`), h("span", { class: "num", dataset: { progressPercent: "" } }, `${progress.progress}%`)),
       run.error ? h("p", { class: "form-error" }, run.error) : null));
@@ -87,20 +105,20 @@ export async function renderMeasure(root, ctx) {
     if (metrics.quality.valid_samples) {
       results.append(h("div", { class: "metric-strip" }, metric("意图覆盖", metrics.coverage), metric("稳定命中", metrics.hit_rate), metric("有效推荐", metrics.effective_recommendation_rate), metric("北极星", metrics.north_star)));
       results.append(h("p", { class: "muted small" }, metrics.coverage.limited ? "小样本仅展示原始计数与方向；不显示确定性 SoV 或百分点诊断。" : `SoV ${pct(metrics.share_of_voice.value)} · ${metrics.share_of_voice.definition}。${metrics.limitations.join("；")}`));
-    } else results.append(h("div", { class: "inline-panel warning-panel" }, h("h3", {}, manual && metrics.quality.awaiting_collection ? "等待人工采集与证据提交" : "当前没有可诊断的有效样本"), h("p", {}, manual ? "进入“采集与复核证据”，逐条填写实际页面回答并上传截图。待采集、失败或上下文不符的样本不会成为零提及。" : "请检查队列、引擎错误和取消记录。这里不会显示“0% 提及”作为业务结论。")));
+    } else results.append(h("div", { class: "inline-panel warning-panel" }, h("h3", {}, manual && metrics.quality.awaiting_collection ? browser ? "等待授权浏览器采集与证据提交" : "等待人工采集与证据提交" : "当前没有可诊断的有效样本"), h("p", {}, browser ? "采集器会逐条发送冻结问题并保存回答区域截图和 HTML。登录、验证码或结果不明时需要管理员处理；失败样本不会成为零提及。" : manual ? "进入“采集与复核证据”，逐条填写实际页面回答并上传截图。待采集、失败或上下文不符的样本不会成为零提及。" : "请检查队列、引擎错误和取消记录。这里不会显示“0% 提及”作为业务结论。")));
     results.append(h("dl", { class: "definition-list quality-ledger" },
       h("div", {}, h("dt", {}, "有效样本"), h("dd", {}, `${metrics.quality.valid_samples}/${metrics.quality.expected_samples}`)),
       h("div", {}, h("dt", {}, "失败 / 取消"), h("dd", {}, `${metrics.quality.failed_samples} / ${metrics.quality.cancelled_samples}`)),
       h("div", {}, h("dt", {}, "待复核回答"), h("dd", {}, metrics.quality.pending_review_answers)),
       h("div", {}, h("dt", {}, "Judge 降级"), h("dd", {}, `${metrics.quality.judge_fallback_rate.hits}/${metrics.quality.judge_fallback_rate.n}`)),
-      manual ? h("div", {}, h("dt", {}, "待人工采集"), h("dd", {}, metrics.quality.awaiting_collection || 0)) : null,
+      manual ? h("div", {}, h("dt", {}, browser ? "待网页采集" : "待人工采集"), h("dd", {}, metrics.quality.awaiting_collection || 0)) : null,
       manual ? h("div", {}, h("dt", {}, "有效样本证据覆盖"), h("dd", {}, `${metrics.quality.evidence_coverage?.hits || 0}/${metrics.quality.evidence_coverage?.n || 0}`)) : null));
     detail.append(results);
     const diagnostics = h("div", { class: "run-diagnostics" });
     if (metrics.dimensions.length) diagnostics.append(section("四维原始计数", "小样本只展示计数与方向，不据此判定确定胜负", dataTable(["维度", "覆盖", "命中 / 有效回答", "样本"], metrics.dimensions.map((row) => [label(row.key), `${row.coverage.hits}/${row.coverage.n}${row.coverage.limited ? "" : ` · ${pct(row.coverage.value)}`}`, `${row.hit_rate.hits}/${row.hit_rate.n}`, row.samples]))));
     if (metrics.competitors.length) diagnostics.append(section("实体池表现", "SoV 与主品牌采用完全相同的意图×引擎加权口径；小样本不显示 SoV", dataTable(["实体", "角色", "确认提及", "SoV", "负面"], metrics.competitors.map((row) => [row.name, label(row.role), row.mentions, metrics.coverage.limited ? "—" : pct(row.sov), row.negative]))));
     if (diagnostics.childNodes.length) detail.append(diagnostics);
-  } else detail.append(emptyState(manual ? "尚未创建人工采集 Run" : "尚未创建 run", manual ? "创建后系统只生成待采集任务，不会自动打开或操作产品网页。请在证据复核页人工提交回答与截图。" : "调用预估仅用于确认，不会自动执行。创建后即使离开页面，持久队列也会继续。", null));
+  } else detail.append(emptyState(browser ? "尚未创建授权浏览器 Run" : manual ? "尚未创建人工采集 Run" : "尚未创建 run", browser ? "创建前会确认第三方产品、问题数和独立 Judge。只有已验证的本机会话才能执行；创建后任务全局串行，结果不明不会自动重发。" : manual ? "创建后系统只生成待采集任务，不会自动打开或操作产品网页。请在证据复核页人工提交回答与截图。" : "调用预估仅用于确认，不会自动执行。创建后即使离开页面，持久队列也会继续。", null));
   const historyKey = `${ctx.project.id}:${wave.id}`;
   const history = h("details", { class: "advanced run-history", open: openRunHistories.has(historyKey) },
     h("summary", {}, h("span", {}, "此 Wave 的执行记录"), h("small", {}, `${run ? `选中 Run #${run.id} · ` : ""}${wave.runs.length} 次尝试`)),
@@ -128,6 +146,7 @@ export async function renderMeasure(root, ctx) {
         track.querySelector(".progress-bar").style.width = `${fresh.progress.progress}%`;
         detail.querySelector("[data-progress-count]").textContent = `${fresh.progress.finished}/${fresh.progress.total} 个样本已结束`;
         detail.querySelector("[data-progress-percent]").textContent = `${fresh.progress.progress}%`;
+        updateBrowserRunProgress(detail.querySelector("[data-browser-progress]"), fresh.progress.browser, ctx, run.id);
       } catch { /* Keep the last confirmed progress; the next poll can retry. */ }
       finally { polling = false; }
     }, 2500);
@@ -135,7 +154,31 @@ export async function renderMeasure(root, ctx) {
   }
 }
 
-function waveWizard(ctx, sets, engines) {
+function browserRunProgress(browser, ctx, runId) {
+  const node = h("div", { class: "browser-run-progress", dataset: { browserProgress: "" }, role: "status", "aria-live": "polite" });
+  updateBrowserRunProgress(node, browser, ctx, runId);
+  return node;
+}
+
+function updateBrowserRunProgress(node, browser, ctx, runId) {
+  if (!node) return;
+  clear(node);
+  if (!browser) {
+    node.append(h("strong", {}, "网页采集阶段已结束"), h("p", {}, "原始回答与证据已提交，正在等待独立 Judge 或执行收尾。"));
+    return;
+  }
+  const needsAction = ["awaiting_user", "paused_unknown"].includes(browser.phase);
+  node.append(h("div", { class: "section-head" }, h("div", {}, h("h3", {}, browserPhaseName(browser.phase)),
+    h("p", {}, browser.detail || (browser.prompt_submitted ? "问题已发送；采集器只会核对原会话，不会自动重发。" : "任务在本机浏览器队列中串行执行。"))),
+    needsAction ? h("a", { class: "button small-button", href: `#/review?run=${runId}&answer=${browser.answer_id}&review=all` }, "处理当前采集") : null),
+    h("p", { class: "browser-current-prompt" }, browser.prompt),
+    h("div", { class: "progress-meta" },
+      h("span", {}, browser.prompt_submitted ? "问题已发送" : "尚未确认发送"),
+      h("span", {}, `心跳 ${formatDate(browser.heartbeat_at, ctx.project.timezone)}`),
+      browser.action_required ? h("span", {}, `${browser.action_required} 条需要管理员处理`) : null));
+}
+
+function waveWizard(ctx, sets, engines, browserSessions = {}) {
   const frozen = sets.filter((item) => item.status === "frozen");
   if (!frozen.length) { toast("请先在问题集工作台审核并冻结一个版本", true); return; }
   const enabled = engines.filter((item) => item.enabled);
@@ -154,6 +197,10 @@ function waveWizard(ctx, sets, engines) {
   const answerOverridePanel = h("div", {});
   const answerOverrides = new Map();
   const productUrl = input("", { readonly: true });
+  const collectionMethod = select([{ value: "manual", label: "人工复制回答并上传证据" }, { value: "browser_assisted", label: "授权浏览器自动采集" }], "manual");
+  const browserDriver = select([{ value: "deepseek_web", label: "DeepSeek 网页版" }, { value: "kimi_web", label: "Kimi 网页版" }], "deepseek_web");
+  const browserDriverField = field("浏览器 Driver", browserDriver, "两个平台使用各自独立 Driver，不通用套用选择器");
+  const browserConnection = h("p", { class: "muted small" });
   const platform = input("", { required: true, placeholder: "产品或平台名称，不填写账号别名" });
   const surface = select([{ value: "desktop_web", label: "桌面 Web" }, { value: "mobile_web", label: "移动 Web" }], "desktop_web");
   const pageMode = input("default", { required: true, placeholder: "实际页面模型或模式" });
@@ -167,13 +214,14 @@ function waveWizard(ctx, sets, engines) {
   const language = input(ctx.project.language || "zh-CN", { required: true });
   const contextClearing = input("new_session", { required: true, placeholder: "如 new_session / clear_context" });
   const followUpPolicy = input("none", { required: true, placeholder: "如 none / one_follow_up" });
+  const collectionHeading = h("h3", {}, "冻结 Consumer Web 采集协议");
+  const collectionDescription = h("p", { class: "muted small" });
   const collectionPanel = h("div", { class: "inline-panel emphasis", hidden: true },
-    h("h3", {}, "冻结人工 Consumer Web 采集协议"),
-    h("p", { class: "muted small" }, "本轮只生成人工采集任务。系统不会自动打开网页、保存登录会话或提取 DOM；正式提交时实际页面和以下上下文必须一致。"),
-    h("div", { class: "form-grid" }, field("产品入口", productUrl), field("平台", platform), field("页面形态", surface), field("页面模型 / 模式", pageMode),
+    collectionHeading, collectionDescription,
+    h("div", { class: "form-grid" }, field("采集方法", collectionMethod), browserDriverField, field("产品入口", productUrl), field("平台", platform), field("页面形态", surface), field("页面模型 / 模式", pageMode),
       field("会话策略", sessionMode), field("登录状态", loginState), field("账号类型", accountType), field("地区", region), field("语言", language),
       field("上下文清理", contextClearing), field("追问策略", followUpPolicy)),
-    networking.node, deepThinking.node, deepResearch.node);
+    browserConnection, networking.node, deepThinking.node, deepResearch.node);
   const engineChecks = enabled.map((engine) => {
     const control = checkbox(`${engine.name} · ${engine.model || engine.kind}`, enabled.length === 1, `${label(engine.mode)} · ${label(engine.measurement_target)} · ${engine.vendor}`);
     control.engine = engine;
@@ -185,9 +233,41 @@ function waveWizard(ctx, sets, engines) {
     });
     return control;
   });
+  let consumerTarget = null;
+  let collectionTargetId = null;
+  const syncCollection = () => {
+    const automatic = Boolean(consumerTarget) && collectionMethod.value === "browser_assisted";
+    collectionHeading.textContent = automatic ? "冻结授权浏览器 Consumer Web 采集协议" : "冻结人工 Consumer Web 采集协议";
+    collectionDescription.textContent = automatic
+      ? "本机采集器将在可见浏览器中新建会话、发送冻结问题并提取回答区域证据。你本人负责登录和验证码；系统不绕过验证，不自动重发结果不明的问题。"
+      : "本轮只生成人工采集任务。系统不会自动打开网页、保存登录会话或提取 DOM；正式提交时实际页面和以下上下文必须一致。";
+    collectionMethod.disabled = !consumerTarget;
+    browserDriver.disabled = !automatic;
+    browserDriverField.hidden = !automatic;
+    browserConnection.hidden = !automatic;
+    if (automatic) {
+      surface.value = "desktop_web"; sessionMode.value = "new"; loginState.value = "logged_in";
+      contextClearing.value = "new_session"; followUpPolicy.value = "none"; deepResearch.control.checked = false;
+      const sessions = browserSessions[consumerTarget.id] || [];
+      const current = sessions.find((item) => item.driver === browserDriver.value && item.status === "active");
+      browserConnection.textContent = ctx.role === "admin"
+        ? current ? `已验证 ${driverName(browserDriver.value)} 本机会话 · 最近验证 ${formatDate(current.last_verified_at, ctx.project.timezone)}。创建 Run 时还会再次检查。`
+          : `当前目标没有已验证的 ${driverName(browserDriver.value)} 会话。可以先保存 Wave；创建 Run 前请到系统管理完成连接。`
+        : "创建 Run 时服务端会检查管理员已验证的本机会话；分析师不能查看或修改浏览器连接。";
+    } else browserConnection.textContent = "";
+    [surface, sessionMode, loginState, contextClearing, followUpPolicy].forEach((control) => { control.disabled = !consumerTarget || automatic; });
+    deepResearch.control.disabled = !consumerTarget || automatic;
+  };
   const syncEngines = () => {
     const selected = engineChecks.filter((item) => item.control.checked).map((item) => item.engine);
-    const manualTarget = selected.find((engine) => engine.kind === "manual_web");
+    consumerTarget = selected.find((engine) => engine.kind === "manual_web") || null;
+    const manualTarget = consumerTarget;
+    if (manualTarget && collectionTargetId !== manualTarget.id) {
+      collectionTargetId = manualTarget.id;
+      browserDriver.value = manualTarget.vendor.toLowerCase().includes("kimi") ? "kimi_web" : "deepseek_web";
+      const active = (browserSessions[manualTarget.id] || []).find((item) => item.status === "active");
+      if (active) browserDriver.value = active.driver;
+    } else if (!manualTarget) collectionTargetId = null;
     const providerIds = new Set(selected.filter((engine) => engine.kind !== "manual_web").map((engine) => Number(engine.id)));
     collectionPanel.hidden = !manualTarget;
     collectionPanel.querySelectorAll("input,select,textarea").forEach((control) => { control.disabled = !manualTarget; });
@@ -207,7 +287,7 @@ function waveWizard(ctx, sets, engines) {
     judgeModeField.hidden = Boolean(manualTarget) || !judge.control.checked;
     judgeEngineField.hidden = !judge.control.checked || !independent;
     judgeParams.node.hidden = !judge.control.checked;
-    judge.node.querySelector("label").childNodes[0].textContent = manualTarget ? "使用独立 Judge 判定人工回答" : "生产回答使用全量结构化 judge";
+    judge.node.querySelector("label").childNodes[0].textContent = manualTarget ? `使用独立 Judge 判定${collectionMethod.value === "browser_assisted" ? "网页" : "人工"}回答` : "生产回答使用全量结构化 judge";
     judgeEngineField.querySelector("label").textContent = manualTarget ? "独立 Judge 引擎" : "独立 Judge 引擎（不能同时是回答引擎）";
     [...judgeEngine.options].forEach((option) => { option.disabled = !manualTarget && providerIds.has(Number(option.value)); });
     if (judgeEngine.selectedOptions[0]?.disabled) judgeEngine.value = [...judgeEngine.options].find((option) => !option.disabled)?.value || "";
@@ -217,11 +297,14 @@ function waveWizard(ctx, sets, engines) {
       networking.control.checked = manualTarget.mode === "search";
       networking.control.disabled = true;
     } else networking.control.disabled = false;
+    syncCollection();
   };
   judge.control.addEventListener("change", syncEngines);
   judgeMode.addEventListener("change", syncEngines);
+  collectionMethod.addEventListener("change", syncEngines);
+  browserDriver.addEventListener("change", syncCollection);
   const form = h("form", {}, field("Wave 名称", labelInput), field("冻结问题集", setInput),
-    h("fieldset", {}, h("legend", { class: "field-label" }, "选择一个 Provider 组合或一个人工 Web 目标"), engineChecks.map((item) => item.node)),
+    h("fieldset", {}, h("legend", { class: "field-label" }, "选择一个 Provider 组合或一个 Consumer Web 目标"), engineChecks.map((item) => item.node)),
     collectionPanel, h("div", { class: "form-grid" }, field("采样轮次", repeats)), answerParams.node, answerOverridePanel,
     judge.node, judgeModeField, judgeEngineField, judgeParams.node,
     h("p", { class: "muted small" }, "创建 wave 不会调用外部服务。统计阈值沿用项目设置，创建后冻结，不能在看到结果后放宽。"),
@@ -234,7 +317,8 @@ function waveWizard(ctx, sets, engines) {
     if (!selected.length) { formError(form, new Error("至少选择一个测量目标")); return; }
     if (new Set(selected.map((item) => `${item.mode}/${item.measurement_target}`)).size !== 1) { formError(form, new Error("同一 wave 不能混合 memory/search 或 API/产品端口径")); return; }
     const manual = selected.length === 1 && selected[0].kind === "manual_web";
-    if (selected.some((item) => item.kind === "manual_web") && !manual) { formError(form, new Error("人工 Web Wave 只能选择一个目标，不能与 Provider 混合")); return; }
+    const browser = manual && collectionMethod.value === "browser_assisted";
+    if (selected.some((item) => item.kind === "manual_web") && !manual) { formError(form, new Error("Consumer Web Wave 只能选择一个目标，不能与 Provider 混合")); return; }
     if (judge.control.checked && judgeMode.value === "independent" && !judgeEngine.value) { formError(form, new Error("请选择独立 Judge，或改用同引擎判定")); return; }
     try {
       const overrides = {};
@@ -252,26 +336,31 @@ function waveWizard(ctx, sets, engines) {
           networking: networking.control.checked, deep_thinking: deepThinking.control.checked,
           deep_research: deepResearch.control.checked, session_mode: sessionMode.value, login_state: loginState.value,
           account_type: accountType.value, region: region.value, language: language.value,
-          context_clearing: contextClearing.value, follow_up_policy: followUpPolicy.value, protocol_version: "manual-web-v1",
+          context_clearing: contextClearing.value, follow_up_policy: followUpPolicy.value,
+          collection_method: browser ? "browser_assisted" : "manual",
+          browser_driver: browser ? browserDriver.value : null,
+          protocol_version: browser ? "browser-web-v1" : "manual-web-v1",
         } : undefined,
       });
       clear(modal.body);
-      modal.body.append(h("h3", {}, manual ? "人工采集与独立 Judge 预估" : "调用与费用预估"), h("dl", { class: "definition-list" },
-        manual ? h("div", {}, h("dt", {}, "人工采集任务"), h("dd", {}, wave.estimate.collection_tasks)) : null,
+      modal.body.append(h("h3", {}, browser ? "授权浏览器采集与独立 Judge 预估" : manual ? "人工采集与独立 Judge 预估" : "调用与费用预估"), h("dl", { class: "definition-list" },
+        manual ? h("div", {}, h("dt", {}, browser ? "串行浏览器任务" : "人工采集任务"), h("dd", {}, wave.estimate.collection_tasks)) : null,
         h("div", {}, h("dt", {}, "Provider 回答调用"), h("dd", {}, wave.estimate.answer_calls)), h("div", {}, h("dt", {}, "Judge 调用"), h("dd", {}, wave.estimate.judge_calls)),
         h("div", {}, h("dt", {}, "检索调用"), h("dd", {}, wave.estimate.search_calls)), h("div", {}, h("dt", {}, "预估费用"), h("dd", {}, wave.estimate.cost_unknown ? "部分价格未知，不按零成本处理" : wave.estimate.estimated_cost))),
         dataTable(["引擎", "角色", "基础预估", "含安全重试"], (wave.estimate.by_engine || []).map((entry) => [entry.engine, entry.role === "judge" ? "独立 Judge" : "回答 / 同引擎 Judge", entry.estimated_cost ?? "未知", entry.max_estimated_cost ?? "未知"])),
-        h("p", { class: "muted" }, wave.estimate.note), h("div", { class: "form-actions" },
+        h("p", { class: "muted" }, wave.estimate.note),
+        browser ? h("p", { class: "muted" }, `点击下方确认后，将把 ${wave.estimate.collection_tasks} 条冻结问题串行发送到 ${platform.value || driverName(browserDriver.value)}（${driverName(browserDriver.value)}），再使用独立 Judge 判定。网页订阅费用不按 API 调用估算；结果不明不会自动重发。`) : null,
+        h("div", { class: "form-actions" },
           h("button", { class: "button secondary", onClick: () => { modal.close(); ctx.navigate("measure", { wave: wave.id }); } }, "仅保存方案"),
-          h("button", { class: "button", onClick: async () => { try { await startRun(ctx, wave); modal.close(); } catch (error) { if (!handleBudgetError(error, async (reason) => { await startRun(ctx, wave, reason); modal.close(); })) toast(error.message, true); } } }, manual ? "创建人工采集 Run" : "确认调用并创建 Run")));
+          h("button", { class: "button", onClick: async () => { try { await startRun(ctx, wave); modal.close(); } catch (error) { if (!handleBudgetError(error, async (reason) => { await startRun(ctx, wave, reason); modal.close(); })) toast(error.message, true); } } }, browser ? "确认发送并创建 Run" : manual ? "创建人工采集 Run" : "确认调用并创建 Run")));
     } catch (error) { formError(form, error); }
   });
 }
 
 async function startRun(ctx, wave, budgetReason = "") {
-  const result = await api.post(`/api/projects/${ctx.project.id}/waves/${wave.id}/runs`, { budget_confirmation_reason: budgetReason });
+  const result = await api.post(`/api/projects/${ctx.project.id}/waves/${wave.id}/runs`, { budget_confirmation_reason: budgetReason, confirm_browser: isBrowserWave(wave) });
   const manual = isManualWave(wave);
-  toast(manual ? "人工采集 Run 已创建，请逐条提交回答与截图" : "Run 已进入持久队列");
+  toast(isBrowserWave(wave) ? "授权浏览器 Run 已创建，问题将在本机串行采集" : manual ? "人工采集 Run 已创建，请逐条提交回答与截图" : "Run 已进入持久队列");
   ctx.navigate(manual ? "review" : "measure", manual ? { run: result.run.id } : { wave: wave.id, run: result.run.id });
   return result;
 }
@@ -279,11 +368,15 @@ async function startRun(ctx, wave, budgetReason = "") {
 function confirmRun(ctx, wave) {
   const real = requiresRealConfirmation(wave);
   const manual = isManualWave(wave);
+  const browser = isBrowserWave(wave);
   const estimate = wave.estimate.cost_unknown ? "部分价格未知，不会按零成本处理。" : `基础预估 ${wave.estimate.estimated_cost}，含安全重试预估 ${wave.estimate.max_estimated_cost} ${wave.estimate.currency || ""}。`;
-  const description = manual
-    ? `将创建 ${wave.estimate.collection_tasks} 条人工采集任务；Provider 回答和 Search 调用均为 0，独立 Judge 基础调用 ${wave.estimate.judge_calls} 次。${estimate}${real ? "真实 Judge 可能产生费用。" : "当前 Judge 为离线演示夹具，不代表 live 验收。"}系统不会自动操作网页。`
-    : `基础调用 ${wave.estimate.total_external_calls} 次，含安全重试最多 ${wave.estimate.max_external_calls} 次。${estimate}${real ? "真实厂商可能产生费用；超时等结果不明样本不会自动重放。" : "当前为演示引擎。"}`;
-  confirmDialog(manual ? "确认创建人工采集 Run" : "确认创建 Run", description, manual ? "创建并前往人工采集" : "确认并进入队列", async () => {
+  const collection = wave.protocol.collection_protocol || {};
+  const description = browser
+    ? `将把 ${wave.estimate.collection_tasks} 条冻结问题串行发送到 ${collection.platform || driverName(collection.browser_driver)}（${driverName(collection.browser_driver)}），使用本机已验证会话，并保存回答、引用、截图和 HTML。Provider 回答和 Search 调用均为 0，独立 Judge 基础调用 ${wave.estimate.judge_calls} 次。${estimate}${real ? "真实 Judge 可能产生费用。" : "当前 Judge 为离线演示夹具，不代表 live 验收。"}登录和验证码由你本人处理；结果不明不会自动重发。`
+    : manual
+      ? `将创建 ${wave.estimate.collection_tasks} 条人工采集任务；Provider 回答和 Search 调用均为 0，独立 Judge 基础调用 ${wave.estimate.judge_calls} 次。${estimate}${real ? "真实 Judge 可能产生费用。" : "当前 Judge 为离线演示夹具，不代表 live 验收。"}系统不会自动操作网页。`
+      : `基础调用 ${wave.estimate.total_external_calls} 次，含安全重试最多 ${wave.estimate.max_external_calls} 次。${estimate}${real ? "真实厂商可能产生费用；超时等结果不明样本不会自动重放。" : "当前为演示引擎。"}`;
+  confirmDialog(browser ? "确认发送问题并创建 Run" : manual ? "确认创建人工采集 Run" : "确认创建 Run", description, browser ? "确认发送并开始采集" : manual ? "创建并前往人工采集" : "确认并进入队列", async () => {
     try { await startRun(ctx, wave); }
     catch (error) { if (!handleBudgetError(error, (reason) => startRun(ctx, wave, reason))) throw error; }
   });
@@ -294,11 +387,15 @@ function cancelRun(ctx, wave, run) {
 }
 
 function retryRun(ctx, run) {
+  const browser = run.snapshot.protocol.collection_protocol?.collection_method === "browser_assisted";
   const execute = async (reason = "") => {
-    const result = await api.post(`/api/projects/${ctx.project.id}/runs/${run.id}/retry`, { budget_confirmation_reason: reason });
-    toast(`${result.queued} 个样本已${run.snapshot.protocol.measurement_target === "consumer_web" ? "转为待重采" : "重新排队"}`); ctx.refresh();
+    const result = await api.post(`/api/projects/${ctx.project.id}/runs/${run.id}/retry`, { budget_confirmation_reason: reason, confirm_browser: browser });
+    toast(`${result.queued} 个样本已${run.snapshot.protocol.measurement_target === "consumer_web" ? "转入重采或 Judge 重试" : "重新排队"}`); ctx.refresh();
   };
-  confirmDialog("确认重试失败样本", "失败与取消样本会重新排队。超时等结果不明的外部调用可能已被厂商计费，本次重试由管理员明确确认；系统会按失败样本比例重新检查预算。", "确认重试", async () => {
+  const description = browser
+    ? "已有原始回答的失败样本只重跑独立 Judge，原文与证据保持不变；没有原文的失败样本会再次向第三方产品发送对应冻结问题。结果不明的原会话不会被自动重发，网页采集重试由管理员明确确认。"
+    : "失败与取消样本会重新排队。超时等结果不明的外部调用可能已被厂商计费，本次重试由管理员明确确认；系统会按失败样本比例重新检查预算。";
+  confirmDialog("确认重试失败样本", description, browser ? "确认重试" : "确认重试", async () => {
     try { await execute(); } catch (error) { if (!handleBudgetError(error, execute)) throw error; }
   });
 }

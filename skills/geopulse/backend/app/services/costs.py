@@ -160,7 +160,8 @@ def estimate_wave(conn, wave: dict) -> dict:
         "known_cost": round(totals["base"], 6), "currency": currency,
         "cost_unknown": bool(unknown_components), "unknown_components": sorted(set(unknown_components)),
         "mixed_currencies": len(currencies) > 1, "by_engine": by_engine, "blocking": False,
-        "note": ("人工采集不产生 Provider 回答或 Search 调用；仅独立 Judge 计入外部调用与费用。token 和金额为启发式预估，不是厂商账单。"
+        "note": (("授权浏览器" if (protocol.get("collection_protocol") or {}).get("collection_method") == "browser_assisted" else "人工采集")
+                 + "不产生 Provider 回答或 Search 调用；仅独立 Judge 计入外部调用与费用。token 和金额为启发式预估，不是厂商账单。"
                  if manual_web else "回答、Search 与 Judge 分引擎预估；调用次数区分基础与安全重试上限，金额不是厂商账单或绝对费用上限。"),
     }
 

@@ -1,6 +1,6 @@
 ---
 name: geopulse
-description: 自托管的多客户 GEO 交付工作台。冻结问题与实体口径，执行可恢复的 Wave/Run 测量，复核不可变原始证据，完成同口径比较、机会与七步 Action、客户/内部报告审批，以及角色、调度、成本和备份管理。支持 Demo、OpenAI-compatible memory 和 Kimi Search + Chat 检索增强 API。
+description: 自托管的多客户 GEO 交付工作台。冻结问题与实体口径，执行可恢复的 Wave/Run 测量，复核不可变原始证据，完成同口径比较、机会与七步 Action、客户/内部报告审批，以及角色、调度、成本和备份管理。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 与授权 DeepSeek/Kimi 网页采集。
 ---
 
 # GeoPulse v2 — 多客户 GEO 交付工作台
@@ -37,9 +37,10 @@ export GEOPULSE_DB="$HOME/.geopulse/v2/geopulse.db"
 export GEOPULSE_SECRETS="$HOME/.geopulse/v2/secrets.json"
 export GEOPULSE_BACKUP_DIR="$HOME/.geopulse/v2/backups"
 export GEOPULSE_EXPORT_DIR="$HOME/.geopulse/v2/exports"
+export GEOPULSE_BROWSER_PROFILES="$HOME/.geopulse/v2/browser_profiles"
 ```
 
-不要把数据库、secret store、旧 `backend/config.json`、客户原文或测试输出提交到仓库。
+不要把数据库、secret store、浏览器 profile、旧 `backend/config.json`、客户原文或测试输出提交到仓库。
 
 ## 八条工作流
 
@@ -60,13 +61,16 @@ export GEOPULSE_EXPORT_DIR="$HOME/.geopulse/v2/exports"
 
 - **OpenAI-compatible memory**：普通 Chat Completions 记忆态测量。
 - **Kimi Search + Chat**：先调用 `POST /v1/tools/search`，再单独调用 Chat；Search/Chat usage 分开记录。
+- **DeepSeek Search + Chat**：使用官方 Search 协议，再单独调用 Chat；Search/Chat usage 分开记录。
+- **人工 Consumer Web**：人工复制实际网页回答并上传截图、HTML 和页面引用。
+- **DeepSeek Web / Kimi Web 授权浏览器**：通过独立 Driver、本机持久会话和可见浏览器发送冻结问题，采集正文、引用、截图与回答区域 HTML；用户本人登录和处理验证码。
 - **Demo**：本地确定性数据，只用于演示和测试，不能与真实引擎混算。
 
 Search 失败、无结果或协议异常不会静默降级 memory。真实健康检查和真实 Run 可能产生厂商费用，执行前必须核对账号、模型、Base URL、调用次数和预估费用；不要替用户自动确认付费调用。API key 只保存在 0600 secret store，数据库仅存引用，项目导出清空引用。
 
 预算覆盖项目累计、Wave 冻结额度和项目时区每日额度，并记录排队任务的在途预留。默认不启用阻断；软预算超限需要管理员逐次填写理由，硬预算和未知成本在执行前拒绝，调度不能自动确认超限而会进入 `blocked`。成本金额是实际 usage + 管理员价格规则的估算，不是厂商账单。
 
-DeepSeek 已完成一次真实 Provider API smoke，但完整真实 Wave/Run/Judge 未验证；Kimi live 未执行，当前通过的是 Search/Chat 协议 mock。后续真实付费调用仍需单独预估和即时确认。
+DeepSeek Search+Chat、Kimi Search+Chat 和 DeepSeek 独立 Judge 已完成隔离单题 live；未覆盖 live 失败路径或账单对账。DeepSeek Web 与 Kimi Web 目前只通过本地模拟页面的真实 Chrome 合同验收，真实 selectors、登录和页面流程尚未 live 校准，不能标为真实平台已接入。任何新的真实 Provider 或网页调用仍需单独预估和即时确认。
 
 ## 测量与权限边界
 
@@ -116,10 +120,13 @@ done
 .venv/bin/python tests/stress_simulated.py
 .venv/bin/python tests/browser_smoke.py
 .venv/bin/python tests/browser_governance.py
+.venv/bin/python tests/browser_manual_web.py
+.venv/bin/python tests/browser_model_execution.py
+.venv/bin/python tests/browser_web_collector.py
 ```
 
 浏览器与压力脚本使用临时数据库和动态端口，不读取真实旧配置，不终止未知服务进程，不调用真实付费 Provider。离线黄金集只是小型回归集，不代表生产 LLM Judge 准确率；2700 次压力调用全部来自 DemoProvider。
 
 ## 版本
 
-v2.0.1 · 2026-11-07 · 在 v2 多客户隔离、八条交付工作流和不可变报告基础上，补齐预算、调度、告警、原文保留和复测执行闭环，重建任务型桌面/移动前端与治理浏览器验收。
+v2.3.0 · 2026-11-08 · 新增 DeepSeek Search、模型执行参数、独立 Judge、人工 Consumer Web，以及 DeepSeek Web/Kimi Web 授权浏览器离线闭环；真实网页平台仍待逐平台 live 校准。

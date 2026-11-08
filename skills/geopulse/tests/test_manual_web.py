@@ -315,7 +315,7 @@ def test_collection_permissions_cross_project_and_report_evidence_gate(client):
         conn.commit()
     report = api(client, "POST", f"/api/projects/{project}/reports", json={"wave_ids": [wave["id"]]})
     detail = api(client, "GET", f"/api/projects/{project}/reports/{report['id']}")
-    assert any("人工 Web 样本" in item for item in detail["gates"])
+    assert any("Consumer Web 样本" in item for item in detail["gates"])
     api(client, "POST", f"/api/projects/{project}/reports/{report['id']}/status",
         json={"status": "data_checked"}, expected=409)
 
@@ -348,7 +348,7 @@ def test_web_retention_tombstone_and_cross_surface_comparison(client):
     api(client, "GET", f"/api/projects/{project}/attachments/{collection['attachments'][0]['id']}", expected=410)
     report = api(client, "POST", f"/api/projects/{project}/reports", json={"wave_ids": [wave["id"]]})
     detail = api(client, "GET", f"/api/projects/{project}/reports/{report['id']}")
-    assert any("人工 Web 样本" in item for item in detail["gates"])
+    assert any("Consumer Web 样本" in item for item in detail["gates"])
 
 
 def test_populated_v2_migration_preserves_engine_ids_and_foreign_keys(tmp_path, monkeypatch):

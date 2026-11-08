@@ -25,6 +25,7 @@ def local_main():
     from app.migrations import SCHEMA_VERSION, backup, initialize, migrate, restore
     from app.security import hash_password
     from app.services.exports import build_project_export
+    from app.services.browser_worker import BrowserWorker
     from app.services.measurement import Worker
 
     parser = argparse.ArgumentParser(prog="geopulse")
@@ -72,13 +73,15 @@ def local_main():
             conn.commit()
         print("密码已更新，旧会话已失效")
     elif args.command == "run-worker":
-        instance = Worker()
+        instance, browser = Worker(), BrowserWorker()
         instance.start()
-        print("Worker 已启动，Ctrl+C 停止")
+        browser.start()
+        print("Provider/Judge 与授权浏览器 Worker 已启动，Ctrl+C 停止")
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
+            browser.stop()
             instance.stop()
     elif args.command == "golden-eval":
         from app.services.evaluation import evaluate_dataset

@@ -78,7 +78,7 @@ def new_run(project_id: int, wave_id: int, request: Request, payload: RunCreateI
     with connect() as conn:
         wave = scoped_object(conn, "waves", wave_id, context["project"])
     run = create_run(context["project"], wave, context["user"]["id"], confirmation_reason=reason,
-                     allow_manual=True)
+                     allow_manual=True, confirm_browser=bool(payload and payload.confirm_browser))
     return {"run": run_public(run), "progress": {"total": 0, "finished": 0, "progress": 0}}
 
 
@@ -149,24 +149,56 @@ def retry_run(project_id: int, run_id: int, request: Request, payload: RunCreate
         if run["status"] in ("queued", "running"):
             raise HTTPException(409, "运行中的 Run 不能重复派发重试")
         wave = scoped_object(conn, "waves", run["wave_id"], context["project"])
-        manual_web = loads(wave["protocol_json"], {}).get("measurement_target") == "consumer_web"
+        protocol = loads(wave["protocol_json"], {})
+        manual_web = protocol.get("measurement_target") == "consumer_web"
+        collection = protocol.get("collection_protocol") or {}
         count = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=? AND status IN ('failed','cancelled')", (run_id,))["count"]
         if not count:
             raise HTTPException(409, "没有可重试的失败样本")
+        recollect_count = one(conn, """SELECT COUNT(*) AS count FROM answers
+                                      WHERE run_id=? AND status IN ('failed','cancelled') AND raw_text IS NULL""",
+                              (run_id,))["count"] if manual_web else 0
+        browser_session_id = None
+        if manual_web and recollect_count and collection.get("collection_method") == "browser_assisted":
+            if not payload or not payload.confirm_browser:
+                raise HTTPException(409, detail={"code": "browser_confirmation_required",
+                                                "message": "重采会再次向第三方消费者产品发送问题，请明确确认"})
+            engine_id = int((protocol.get("engine_ids") or [0])[0])
+            browser_session = one(conn, """SELECT id FROM browser_sessions
+                                          WHERE project_id=? AND engine_config_id=? AND driver=? AND status='active'
+                                          ORDER BY id DESC LIMIT 1""",
+                                  (project_id, engine_id, collection.get("browser_driver") or ""))
+            if not browser_session:
+                raise HTTPException(409, "重采前需要管理员重新验证本机浏览器会话")
+            browser_session_id = browser_session["id"]
         total = one(conn, "SELECT COUNT(*) AS count FROM answers WHERE run_id=?", (run_id,))["count"]
         estimate = scale_estimate(estimate_wave(conn, wave), count / total)
         decision = authorize_budget(conn, context["project"], estimate, wave=wave,
                                     actor=context["user"]["id"], confirmation_reason=reason,
                                     exclude_run_id=run_id)
-        conn.execute("UPDATE answers SET status=?,valid_sample=NULL,error_type=NULL,error_detail=NULL,completed_at=NULL WHERE run_id=? AND status IN ('failed','cancelled')",
-                     ("awaiting_collection" if manual_web else "queued", run_id))
         if manual_web:
+            conn.execute("""UPDATE answers SET status='judging',valid_sample=NULL,error_type=NULL,error_detail=NULL,
+                            completed_at=NULL WHERE run_id=? AND status IN ('failed','cancelled') AND raw_text IS NOT NULL""",
+                         (run_id,))
+            conn.execute("""UPDATE answers SET status='awaiting_collection',valid_sample=NULL,error_type=NULL,error_detail=NULL,
+                            completed_at=NULL WHERE run_id=? AND status IN ('failed','cancelled') AND raw_text IS NULL""",
+                         (run_id,))
             conn.execute("""UPDATE web_collections SET status='recollect_required',draft_text='',actual_url='',observed_mode='',
                             observed_at='',timezone='',session_context_json='{}',retrieval_status='unknown',notes='',
                             failure_type='',failure_detail='',citations_json='[]',submitted_at=NULL,updated_at=?
                             WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='awaiting_collection')""",
                          (utc_now(), run_id))
             conn.execute("DELETE FROM answer_attachments WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='awaiting_collection')", (run_id,))
+            if collection.get("collection_method") == "browser_assisted":
+                conn.execute("""UPDATE web_collections SET status='collecting',browser_phase='queued',
+                                browser_session_id=?,browser_attempt_count=0,browser_lease_owner='',browser_lease_expires_at=NULL,
+                                browser_heartbeat_at=NULL,browser_send_started_at=NULL,prompt_submitted_at=NULL,
+                                conversation_url='',browser_phase_detail='',browser_requested_by=?,updated_at=?
+                                WHERE answer_id IN (SELECT id FROM answers WHERE run_id=? AND status='awaiting_collection')""",
+                             (browser_session_id, context["user"]["id"], utc_now(), run_id))
+        else:
+            conn.execute("UPDATE answers SET status='queued',valid_sample=NULL,error_type=NULL,error_detail=NULL,completed_at=NULL WHERE run_id=? AND status IN ('failed','cancelled')",
+                         (run_id,))
         conn.execute("UPDATE runs SET status='queued',cancel_requested=0,finished_at=NULL WHERE id=?", (run_id,))
         conn.execute("UPDATE waves SET status='running' WHERE id=?", (run["wave_id"],))
         reserve(conn, context["project"], decision, wave=wave, run_id=run_id, actor=context["user"]["id"])

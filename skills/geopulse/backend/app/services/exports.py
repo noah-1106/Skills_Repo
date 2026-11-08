@@ -21,7 +21,8 @@ def sanitize(value):
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
-            if key in ("api_key", "password_hash", "authorization"):
+            if key in ("api_key", "password_hash", "authorization", "profile_ref", "browser_lease_owner",
+                       "browser_lease_expires_at", "browser_session_id"):
                 continue
             if key == "secret_ref":
                 result[key] = ""

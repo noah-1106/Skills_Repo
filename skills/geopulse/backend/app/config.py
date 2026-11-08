@@ -49,6 +49,10 @@ def backup_dir() -> Path:
     return Path(os.environ.get("GEOPULSE_BACKUP_DIR", str(BACKEND / "backups")))
 
 
+def browser_profile_dir() -> Path:
+    return Path(os.environ.get("GEOPULSE_BROWSER_PROFILES", str(BACKEND / "browser_profiles")))
+
+
 def export_dir() -> Path:
     return Path(os.environ.get("GEOPULSE_EXPORT_DIR", str(ROOT / "outputs")))
 
@@ -66,3 +70,5 @@ def ensure_directories() -> None:
     secret_path().parent.mkdir(parents=True, exist_ok=True)
     backup_dir().mkdir(parents=True, exist_ok=True)
     export_dir().mkdir(parents=True, exist_ok=True)
+    browser_profile_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+    browser_profile_dir().chmod(0o700)

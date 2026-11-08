@@ -57,7 +57,8 @@ engine           list / create / update / health
 wave             list / create / get / run / official / status
 run              get / answers / metrics / wait / cancel / retry
 answer           get / revise
-collection       get / save / submit / fail
+collection       get / save / submit / fail / resume
+browser-session  list / create / verify / revoke
 evidence         upload / download / delete
 compare          同口径或跨 surface 摘要
 opportunity      generate / list / review / status / action
@@ -81,6 +82,8 @@ health           服务健康状态
 ```bash
 .venv/bin/python scripts/geopulse_ctl.py wave create --help
 .venv/bin/python scripts/geopulse_ctl.py evidence upload --help
+.venv/bin/python scripts/geopulse_ctl.py browser-session create --help
+.venv/bin/python scripts/geopulse_ctl.py collection resume --help
 ```
 
 `capabilities` 返回服务健康、当前身份和完整注册表。`live_provider_verified=false` 是有意的：命令覆盖不等于真实 Provider、真实消费者平台或 Collector 已验收。
@@ -123,6 +126,7 @@ Shell 变量只缩短示例；也可以重复写完整解释器路径。`run wai
 ## 6. 真实调用与写操作确认
 
 - 真实 `wave run` 未 `--confirm` 时只读取 Wave/estimate，不发送创建 Run 的 POST。
+- `collection_method=browser_assisted` 的 `wave run` 和含网页重采的 `run retry` 即使 Provider 回答调用为 0，也视为真实外部发送；只有 `--confirm` 才设置 `confirm_browser=true`，服务端还会检查对应 active 本机会话。
 - 非 demo 健康检查第一次返回 409 estimate；第二次必须同时带 `--confirm --estimate previous-estimate.json`。
 - `collection submit/fail`、`evidence delete`、复核仲裁、报告审批、保留清理和项目删除有各自显式确认要求。
 - 软预算仍需针对本次执行填写 `--budget-reason`；没有 `--force` 可绕过权限或硬预算。
@@ -144,9 +148,25 @@ $CTL collection get --project 1 --answer 31
 $CTL evidence download --project 1 --attachment 8 --out /secure/path/page.png
 ```
 
-上传发送原始 bytes 和 SHA-256，不接受秘密字段。截图仅 PNG/JPEG/WebP，单附件最大 10MB，每个回答最多 12 个；raw HTML/text 只作为附件，不会内联执行。正式提交不可覆盖，失败样本不计为零提及。`collection submit --confirm` 返回 `answer_status=judging` 和 `worker_required=true`：必须启动 `run-worker`（或使用已启用应用内 worker 的服务）才会完成 Judge 和 Run，然后再执行 `run wait`。CLI 不会自动打开网页、保存登录会话、提取 DOM、处理验证码或运行爬虫。
+上传发送原始 bytes 和 SHA-256，不接受秘密字段。截图仅 PNG/JPEG/WebP，单附件最大 10MB，每个回答最多 12 个；raw HTML/text 只作为附件，不会内联执行。正式提交不可覆盖，失败样本不计为零提及。`collection submit --confirm` 返回 `answer_status=judging` 和 `worker_required=true`：必须启动 `run-worker`（或使用已启用应用内 worker 的服务）才会完成 Judge 和 Run，然后再执行 `run wait`。这些**人工采集命令**不会自动打开网页、保存登录会话或提取 DOM；自动任务也不能通过 save/submit/upload 改录。
 
-## 8. 文件与退出码
+## 8. 授权浏览器会话与恢复
+
+```bash
+$CTL browser-session list --project 1 --engine 4
+$CTL browser-session create --project 1 --engine 4 \
+  --spec '{"driver":"deepseek_web"}'
+$CTL browser-session verify --project 1 --browser-session 2
+$CTL collection resume --project 1 --answer 31 \
+  --spec '{"action":"resume"}' --confirm
+$CTL browser-session revoke --project 1 --browser-session 2 --confirm
+```
+
+`browser-session *` 仅 admin 可用。create 让本机 BrowserWorker 打开可见浏览器，用户本人登录并处理验证码，再执行 verify；CLI 不接收密码、Cookie、账号别名或 storage state。路径参数使用 `--browser-session`，与认证会话文件的全局 `--session` 不同。
+
+`collection resume` 只用于 `awaiting_user/paused_unknown`：已发送且有 conversation URL 时只恢复原会话，不重发；已发送但无 URL 时服务端拒绝 resume，只能提交 `{"action":"fail","detail":"无法确认是否发送"}` 登记失败。需要人工降级时另建 `collection_method=manual` 的 Wave/Run，不把自动任务改成人工原文。`run-worker` 同时运行 Provider/Judge 与 BrowserWorker。
+
+## 9. 文件与退出码
 
 下载先写临时文件，校验非空、大小、响应 `X-Content-SHA256` 和 PDF magic；项目导出还重新计算内部 payload SHA-256。成功后以 0600 原子替换目标，默认不覆盖已有文件。
 

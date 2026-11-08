@@ -91,7 +91,9 @@ class CollectionProtocolIn(Model):
     language: str = "zh-CN"
     context_clearing: str = "new_session"
     follow_up_policy: str = "none"
-    protocol_version: Literal["manual-web-v1"] = "manual-web-v1"
+    collection_method: Literal["manual", "browser_assisted"] = "manual"
+    browser_driver: Literal["deepseek_web", "kimi_web"] | None = None
+    protocol_version: Literal["manual-web-v1", "browser-web-v1"] = "manual-web-v1"
 
 
 class ExecutionParams(Model):
@@ -128,6 +130,16 @@ class WaveIn(Model):
 
 class RunCreateIn(Model):
     budget_confirmation_reason: str = ""
+    confirm_browser: bool = False
+
+
+class BrowserSessionIn(Model):
+    driver: Literal["deepseek_web", "kimi_web"]
+
+
+class BrowserResumeIn(Model):
+    action: Literal["resume", "fail"] = "resume"
+    detail: str = ""
 
 
 class ObservationRevisionIn(Model):

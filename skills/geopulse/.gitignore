@@ -6,6 +6,7 @@ backend/geopulse.db*
 backend/secrets.json
 backend/config.json
 backend/backups/
+backend/browser_profiles/
 outputs/*
 !outputs/.gitkeep
 .coverage

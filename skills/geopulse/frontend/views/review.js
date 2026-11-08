@@ -1,6 +1,13 @@
 import { api, query, download } from "../api.js";
 import { h, clear, pageHead, section, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, formatDate, label, safeLink, emptyState } from "../components.js";
 
+const browserPhaseName = (phase) => ({
+  queued: "等待本机采集器", session_check: "检查登录会话", preparing: "准备新会话",
+  submitting: "正在发送问题", waiting: "等待网页回答", extracting: "提取回答与证据",
+  uploading: "保存原始证据", awaiting_user: "需要处理登录或验证码",
+  paused_unknown: "结果不明，等待管理员核对", completed: "采集完成", failed: "采集失败",
+}[phase] || phase || "等待采集");
+
 export async function renderReview(root, ctx) {
   const waves = (await api.get(`/api/projects/${ctx.project.id}/waves`)).items;
   const allRuns = waves.flatMap((wave) => wave.runs.map((run) => ({ ...run, wave })));
@@ -14,6 +21,7 @@ export async function renderReview(root, ctx) {
   const runEntry = allRuns.find((item) => item.id === selectedId) || allRuns[0];
   const runId = runEntry.id;
   const manual = runEntry.wave.protocol.measurement_target === "consumer_web";
+  const browser = runEntry.wave.protocol.collection_protocol?.collection_method === "browser_assisted";
   const filters = { status: ctx.params.get("status") || "", review: ctx.params.has("review") ? ctx.params.get("review") : manual ? "all" : "pending", limit: 200 };
   const answerData = await api.get(`/api/projects/${ctx.project.id}/runs/${runId}/answers${query(filters)}`);
   const selectedAnswerId = Number(ctx.params.get("answer")) || answerData.items[0]?.id;
@@ -26,10 +34,10 @@ export async function renderReview(root, ctx) {
     target: protocol.measurement_target, repeats: protocol.repeats, n: detail?.status === "succeeded" ? 1 : 0,
     demo: protocol.engine_signature.every((engine) => engine.kind === "demo") });
   clear(root);
-  root.append(pageHead(manual ? "人工采集与证据复核" : "证据复核", manual ? "先完成实际页面回答、截图和采集事实，再复核实体判定。正式提交不可覆盖；失败样本不会成为零提及。" : "只有 confirmed 实体进入有效提及与推荐指标。证据必须逐字来自原文；存疑判定进入人工复核。", actions));
+  root.append(pageHead(browser ? "授权浏览器采集与证据" : manual ? "人工采集与证据复核" : "证据复核", browser ? "查看本机采集阶段与原始证据。登录和验证码由用户处理；结果不明只能恢复原会话或登记失败，不能自动重发。" : manual ? "先完成实际页面回答、截图和采集事实，再复核实体判定。正式提交不可覆盖；失败样本不会成为零提及。" : "只有 confirmed 实体进入有效提及与推荐指标。证据必须逐字来自原文；存疑判定进入人工复核。", actions));
   const runSelect = select(allRuns.map((item) => ({ value: item.id, label: `${item.wave.label} · Run #${item.id} · ${label(item.status)}` })), runId, { "aria-label": "选择 Run" });
   runSelect.addEventListener("change", () => ctx.navigate("review", { run: runSelect.value }));
-  const statusFilter = select([{ value: "", label: "全部回答状态" }, { value: "awaiting_collection", label: "待人工采集" }, { value: "succeeded", label: "成功" }, { value: "failed", label: "失败" }, { value: "cancelled", label: "取消" }, { value: "judging", label: "判定中" }], filters.status);
+  const statusFilter = select([{ value: "", label: "全部回答状态" }, { value: "awaiting_collection", label: browser ? "待网页采集" : "待人工采集" }, { value: "succeeded", label: "成功" }, { value: "failed", label: "失败" }, { value: "cancelled", label: "取消" }, { value: "judging", label: "判定中" }], filters.status);
   const reviewFilter = select([{ value: "all", label: "全部复核状态" }, { value: "pending", label: "仅看待复核" }], filters.review);
   const applyFilters = () => ctx.navigate("review", { run: runId, status: statusFilter.value, review: reviewFilter.value });
   statusFilter.addEventListener("change", applyFilters); reviewFilter.addEventListener("change", applyFilters);
@@ -41,17 +49,28 @@ export async function renderReview(root, ctx) {
       return h("button", { class: `list-item${answer.id === selectedAnswerId ? " active" : ""}`, "aria-current": answer.id === selectedAnswerId ? "location" : null, "data-answer-id": answer.id, onClick: () => ctx.navigate("review", { run: runId, answer: answer.id, status: filters.status, review: filters.review }) },
         h("strong", {}, `#${answer.id} · ${answer.prompt_text}`), h("small", {}, `${answer.engine_name} · Round ${answer.round_no} · ${label(answer.collection_status || answer.status)}`),
         answer.collection_failure_type ? h("span", { class: "cell-sub" }, `采集失败：${answer.collection_failure_type}`) : pending ? h("span", { class: "cell-sub" }, `${pending} 个实体待复核`) : null);
-    }) : h("div", { class: "empty-state" }, h("p", {}, filters.review === "pending" ? "当前 Run 没有待复核回答。可以查看全部回答，或先处理失败样本。" : manual ? "当前筛选没有人工采集任务。" : "当前筛选没有回答。请调整状态筛选。"),
+    }) : h("div", { class: "empty-state" }, h("p", {}, filters.review === "pending" ? "当前 Run 没有待复核回答。可以查看全部回答，或先处理失败样本。" : browser ? "当前筛选没有授权浏览器任务。" : manual ? "当前筛选没有人工采集任务。" : "当前筛选没有回答。请调整状态筛选。"),
       filters.review === "pending" ? h("button", { class: "button secondary", onClick: () => ctx.navigate("review", { run: runId, review: "all", status: filters.status }) }, "查看全部回答") : null));
   const pane = h("div", { class: "detail-pane" });
   pane.append(h("button", { class: "button secondary mobile-back", onClick: () => ctx.navigate("review", { run: runId, status: filters.status, review: filters.review }) }, "返回回答清单"));
   if (detail) renderAnswerDetail(pane, ctx, detail, filters, collection);
   root.append(h("div", { class: `split-layout has-rail wide-left evidence-browser${ctx.params.has("answer") ? " has-detail" : ""}` }, rail, pane));
+  if (browser && detail?.status === "awaiting_collection" && !["awaiting_user", "paused_unknown"].includes(collection.browser_phase)) {
+    let refreshing = false;
+    const timer = setInterval(async () => {
+      if (!ctx.isCurrent() || refreshing) return;
+      refreshing = true;
+      try { await ctx.refresh(); } finally { refreshing = false; }
+    }, 3000);
+    ctx.onCleanup(() => clearInterval(timer));
+  }
 }
 
 function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
   if (collection && answer.status === "awaiting_collection") {
-    root.append(collectionWorkspace(ctx, answer, collection));
+    root.append(collection.collection_method === "browser_assisted"
+      ? browserCollectionWorkspace(ctx, answer, collection)
+      : collectionWorkspace(ctx, answer, collection));
     return;
   }
   if (collection) root.append(collectionFacts(ctx, collection));
@@ -65,7 +84,7 @@ function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
     answer.raw_text ? h("div", { class: "raw-answer", tabindex: 0, role: "region", "aria-label": "原始回答全文" }, answer.raw_text) : h("div", { class: "inline-panel warning-panel" },
       h("h3", {}, answer.content_retained === 0 ? "原文已按保留策略清理" : answer.status === "failed" ? "没有有效回答原文" : "原文不可见"),
       h("p", {}, answer.content_retained === 0 ? "判定、有效样本事实和聚合指标仍保留；不能再新增依赖原文的 revision，新报告也无法通过原文证据闸门。" : answer.status === "failed" ? `${answer.error_type || "执行失败"}。失败样本不能解释为零提及；请由管理员确认是否重试。` : "当前角色可查看实体证据与状态，但不能读取内部原始回答。")),
-    answer.citations.length ? h("div", { class: "inline-panel" }, h("h3", {}, answer.citations.every((citation) => citation.origin === "manual_page") ? "人工记录的页面引用" : "Provider 实际返回的来源"), answer.citations.map((citation) => h("p", {}, safeLink(citation.final_url || citation.raw_url, citation.title || citation.domain), h("span", { class: "cell-sub" }, `${citation.source_type} · ${citation.domain}`)))) : h("p", { class: "muted small" }, collection ? "未记录页面引用；不会把无来源回答判为无效，也不会补造 URL。" : "未暴露可核验来源；不会补造 URL。"));
+    answer.citations.length ? h("div", { class: "inline-panel" }, h("h3", {}, answer.citations.every((citation) => citation.origin === "browser_page") ? "授权浏览器提取的页面引用" : answer.citations.every((citation) => citation.origin === "manual_page") ? "人工记录的页面引用" : "Provider 实际返回的来源"), answer.citations.map((citation) => h("p", {}, safeLink(citation.final_url || citation.raw_url, citation.title || citation.domain), h("span", { class: "cell-sub" }, `${citation.source_type} · ${citation.domain}`)))) : h("p", { class: "muted small" }, collection ? "未记录页面引用；不会把无来源回答判为无效，也不会补造 URL。" : "未暴露可核验来源；不会补造 URL。"));
   const observations = h("section", { class: "observations-panel" }, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, "实体判定"), h("p", {}, `${latest.size} 个冻结实体 · 原文不会因修订改变`))));
   latest.forEach((versions) => {
     const current = versions[0];
@@ -87,7 +106,7 @@ function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
 }
 
 function evidenceList(ctx, collection, onDelete = null) {
-  if (!collection.attachments.length) return h("div", { class: "empty-state" }, h("p", {}, "尚未上传证据。正式提交至少需要一张 PNG、JPEG 或 WebP 截图。"));
+  if (!collection.attachments.length) return h("div", { class: "empty-state" }, h("p", {}, collection.collection_method === "browser_assisted" ? "授权浏览器尚未提交截图与回答区域 HTML；等待采集完成，不能在此人工补传。" : "尚未上传证据。正式提交至少需要一张 PNG、JPEG 或 WebP 截图。"));
   return h("div", { class: "evidence-files" }, collection.attachments.map((attachment) => h("div", { class: "evidence-file" },
     h("div", {}, h("strong", {}, attachment.filename), h("small", { class: "cell-sub" }, `${attachment.kind} · ${attachment.media_type} · ${attachment.byte_size} bytes`)),
     h("code", { class: "evidence-hash", title: attachment.sha256 }, `SHA-256 ${attachment.sha256}`),
@@ -99,9 +118,11 @@ function evidenceList(ctx, collection, onDelete = null) {
 
 function collectionFacts(ctx, collection) {
   const actual = collection.session_context || {};
-  return section("人工 Consumer Web 采集事实", `状态：${label(collection.status)} · 提交后正文、引用和采集事实不可覆盖`, h("div", {},
+  const browser = collection.collection_method === "browser_assisted";
+  return section(browser ? "授权浏览器 Consumer Web 采集事实" : "人工 Consumer Web 采集事实", `状态：${label(collection.status)} · ${browser ? "由独立网页 Driver 提取，提交后原文与证据不可覆盖" : "提交后正文、引用和采集事实不可覆盖"}`, h("div", {},
     h("dl", { class: "definition-list" },
-      h("div", {}, h("dt", {}, "实际页面"), h("dd", {}, collection.actual_url ? safeLink(collection.actual_url) : "—")),
+      browser ? h("div", {}, h("dt", {}, "平台 Driver"), h("dd", {}, `${collection.browser_driver === "kimi_web" ? "Kimi Web" : "DeepSeek Web"} · ${collection.browser_driver_version || "版本未记录"}`)) : null,
+      h("div", {}, h("dt", {}, "实际页面"), h("dd", {}, collection.actual_url || collection.conversation_url ? safeLink(collection.actual_url || collection.conversation_url) : "—")),
       h("div", {}, h("dt", {}, "观察时间"), h("dd", {}, collection.observed_at ? `${collection.observed_at} · ${collection.timezone}` : "—")),
       h("div", {}, h("dt", {}, "页面 / 会话"), h("dd", {}, `${actual.surface || "—"} · ${collection.observed_mode || "—"} · ${actual.session_mode === "new" ? "新会话" : actual.session_mode || "—"}`)),
       h("div", {}, h("dt", {}, "检索状态"), h("dd", {}, collection.retrieval_status || "unknown")),
@@ -110,6 +131,57 @@ function collectionFacts(ctx, collection) {
     collection.failure_type ? h("div", { class: "inline-panel warning-panel" }, h("h3", {}, `采集失败：${collection.failure_type}`), h("p", {}, collection.failure_detail || "失败样本不计入有效提及；请由管理员在测量页确认重采。")) : null,
     collection.notes ? h("p", { class: "muted" }, collection.notes) : null,
     h("h3", {}, "截图与原始证据"), evidenceList(ctx, collection)));
+}
+
+function browserCollectionWorkspace(ctx, answer, collection) {
+  const phase = collection.browser_phase || "queued";
+  const needsAction = ["awaiting_user", "paused_unknown"].includes(phase);
+  const sent = Boolean(collection.browser_send_started_at || collection.prompt_submitted_at);
+  const canResume = needsAction && (!sent || Boolean(collection.conversation_url));
+  const frozen = collection.collection_protocol || {};
+  const driver = collection.browser_driver === "kimi_web" ? "Kimi Web" : "DeepSeek Web";
+  const recover = () => confirmDialog("恢复授权浏览器采集", sent
+    ? "采集器只会打开已记录的原会话，继续等待和提取回答，不会再次发送问题。恢复前必须已完成本机会话验证。"
+    : "采集器将恢复原任务；如问题尚未发送，会在本机可见浏览器中执行本次冻结采集。请确认登录和验证码已处理，并已重新验证会话。",
+  sent ? "恢复原会话，不重发" : "恢复当前采集", async () => {
+    await api.post(`/api/projects/${ctx.project.id}/answers/${answer.id}/collection/resume`, { action: "resume" });
+    toast("采集已恢复排队；不会自动重发已发送问题"); ctx.refresh();
+  });
+  const fail = () => confirmDialog("登记网页采集无法恢复", "该样本将标记为失败且不计入有效提及。原始结果不明的任务不会被重发；如需重采，请在测量页单独确认。", "登记失败", async () => {
+    await api.post(`/api/projects/${ctx.project.id}/answers/${answer.id}/collection/resume`, { action: "fail", detail: "管理员确认当前网页结果无法可靠恢复，未形成有效样本" });
+    toast("已登记采集失败；未计入有效样本"); ctx.refresh();
+  }, true);
+  const primary = ctx.role === "admin" && needsAction
+    ? canResume ? h("button", { class: "button", onClick: recover }, sent ? "恢复原会话，不重发" : "已验证会话，恢复采集")
+      : h("button", { class: "button danger", onClick: fail }, "登记无法恢复")
+    : null;
+  return h("div", { class: "browser-collection-workspace" },
+    h("div", { class: `inline-panel${needsAction ? " warning-panel" : " emphasis"}` },
+      h("h2", {}, `#${answer.id} · ${browserPhaseName(phase)}`),
+      h("p", {}, answer.prompt_text),
+      h("p", { class: "muted" }, collection.browser_phase_detail || (needsAction
+        ? ctx.role === "admin" ? "请核对本机浏览器和原会话，再选择唯一合适的恢复操作。" : "等待管理员核对本机浏览器和原会话。"
+        : "采集器正在本机串行处理；此页面不提供人工改录入。")),
+      h("dl", { class: "definition-list" },
+        h("div", {}, h("dt", {}, "采集平台"), h("dd", {}, driver)),
+        h("div", {}, h("dt", {}, "问题发送"), h("dd", {}, collection.prompt_submitted_at ? `已发送 · ${formatDate(collection.prompt_submitted_at, ctx.project.timezone)}` : sent ? "发送结果待核对" : "尚未确认发送")),
+        h("div", {}, h("dt", {}, "采集器心跳"), h("dd", {}, formatDate(collection.browser_heartbeat_at, ctx.project.timezone))),
+        h("div", {}, h("dt", {}, "执行次数"), h("dd", {}, collection.browser_attempt_count || 0))),
+      collection.conversation_url ? h("p", {}, safeLink(collection.conversation_url, "打开已记录的原会话")) : null,
+      primary,
+      ctx.role === "admin" && phase === "awaiting_user" ? h("p", { class: "muted small" }, "如会话已失效，请先到系统管理重新登录并验证，再点击恢复。") : null,
+      ctx.role === "admin" && phase === "awaiting_user" ? h("a", { class: "button secondary", href: "#/admin?tab=engines" }, "管理本机浏览器连接") : null,
+      ctx.role === "admin" && needsAction && canResume ? h("details", { class: "advanced danger-zone" }, h("summary", {}, "无法可靠恢复？登记失败"), h("div", {},
+        h("p", { class: "muted" }, "只有确认无法核对原会话时才登记失败；不会把缺失回答算作零提及。"),
+        h("button", { class: "button danger", onClick: fail }, "登记采集失败"))) : null),
+    section("自动采集证据", "回答区域截图与 HTML 由 Collector 一并提交；自动任务不能通过人工上传接口补造证据", evidenceList(ctx, collection)),
+    h("details", { class: "advanced" }, h("summary", {}, "查看冻结采集上下文"), h("div", {},
+      h("dl", { class: "definition-list" },
+        h("div", {}, h("dt", {}, "产品入口"), h("dd", {}, frozen.product_url || "—")),
+        h("div", {}, h("dt", {}, "Driver 版本"), h("dd", {}, collection.browser_driver_version || "—")),
+        h("div", {}, h("dt", {}, "页面 / 模式"), h("dd", {}, `${frozen.surface || "—"} · ${frozen.page_mode || "default"}`)),
+        h("div", {}, h("dt", {}, "会话 / 追问"), h("dd", {}, `${frozen.session_mode || "—"} · ${frozen.follow_up_policy || "—"}`))),
+      h("p", { class: "muted small" }, "网页引用只记录页面实际展示的 URL，不会自动访问，也不代表已核验正文支持关系。"))));
 }
 
 async function evidenceSha256(file) {

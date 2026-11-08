@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.3.0 — 2026-11-08
+
+### 授权 Consumer Web Collector
+
+- 新增 schema v5 与应用 v2.3.0。保留 `manual_web` 作为 Consumer Web 内部兼容类型，在冻结协议中区分 `collection_method=manual|browser_assisted`、`manual-web-v1|browser-web-v1` 和 `browser_driver`。历史 collection 默认 manual；新增 `browser_page` 引用 origin。
+- 首批实现独立的 DeepSeek Web 与 Kimi Web Driver，覆盖登录/验证码识别、新聊天、联网/深度开关核验、发送、流式稳定等待、正文/引用提取、回答区域截图和 outerHTML。ChatGPT、豆包、Gemini 不写空壳 Driver。
+- 新增 admin 本机会话 create/list/verify/revoke。持久 Playwright profile 位于受控 0700 目录，Cookie/localStorage/密码/storage state 不进入 SQLite；用户本人在可见浏览器登录和处理验证码，不做绕过或反检测伪装。
+- 新增独立 BrowserWorker 串行 lane、数据库 lease/heartbeat 和本机 profile 文件锁。队列认领使用 `BEGIN IMMEDIATE`、未过期 lease 排除和比较并交换更新，认领即进入 `preparing`，防止重复 Worker 覆盖 owner 或重复增加 attempt。自动 Run 必须 `confirm_browser=true` 且存在对应 active session；Provider API、Consumer Web 和后续 Consumer App 口径继续严格分开，scheduler 不自动操作网页。
+- 建立发送前后恢复边界：发送前过期任务可重排，发送中/发送后崩溃进入 `paused_unknown`，已发送任务只恢复原 conversation URL，不自动重发；无 URL 只能由管理员登记失败。登录失效和验证码暂停同 session，支持 expired 重新验证后恢复。
+- 自动正文、raw hash、截图、HTML、引用和实际上下文在一个事务内提交，再复用独立 Judge、Observation revision、Run、报告和 CLI。修复提交后 Judge retry 清证据/覆盖原文的边界；自动任务禁止人工 draft/upload/submit 改录。
+- Run 进度、证据页和测量向导显示当前 prompt、browser phase、心跳、action-required、外部发送确认和恢复操作。薄 CLI 新增 browser-session 与 collection resume，路径参数使用 `--browser-session`。
+- 严格比较增加 product URL、platform、collection method 和 Driver；报告分别标注人工/授权浏览器证据。项目导出排除 session/profile/lease，retention 清理 conversation URL 和阶段详情。
+
+### 验证与边界
+
+- 122 项 pytest 通过，覆盖 populated v4→v5 migration、两平台自动提交、双 Worker 排他认领、profile 锁竞争重排、发送后恢复不重复提问、expired 重验、验证码暂停、取消、证据事务回滚、10MB 上限和 post-submit retry 不可变性。
+- 五套真实 Chrome 验收通过：八工作流、治理、人工 Web、模型执行，以及新增授权 Collector。新增离线 Collector 同时验证两个独立 Driver、登录、模式、流式回答、引用、截图/HTML、异常、原会话恢复、失败、正式 Run、报告、撤销、四角色和 1440/768/390，无 pageerror 或外部请求。
+- **DeepSeek Web 与 Kimi Web 尚未进行真实平台 live 验收**。当前 selectors 和页面流程只通过本地模拟页面合同，不能据此宣称真实平台已接入；每个平台仍需授权账号、可见浏览器、用户登录/验证码和隔离单题的即时确认验收。
+- 本轮未执行真实外部网页登录或提问，未自动提交、推送或合并代码。
+
 ## 2.2.0 — 2026-11-07
 
 ### 模型能力、执行参数与独立 Judge

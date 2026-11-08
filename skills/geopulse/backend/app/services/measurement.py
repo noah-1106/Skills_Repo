@@ -117,10 +117,27 @@ def create_wave(project: dict, actor: int, payload: dict) -> dict:
             if not collection_protocol or product_url != engines[0]["base_url"].rstrip("/"):
                 raise HTTPException(409, "冻结采集协议必须使用目标配置中的产品入口")
             collection_protocol["product_url"] = engines[0]["base_url"].rstrip("/")
+            method = collection_protocol.get("collection_method") or "manual"
+            collection_protocol["collection_method"] = method
+            if method == "manual":
+                collection_protocol["protocol_version"] = "manual-web-v1"
+                collection_protocol["browser_driver"] = None
+            elif method == "browser_assisted":
+                if collection_protocol.get("browser_driver") not in ("deepseek_web", "kimi_web"):
+                    raise HTTPException(400, "授权浏览器采集必须选择 DeepSeek Web 或 Kimi Web Driver")
+                if collection_protocol.get("protocol_version") != "browser-web-v1":
+                    raise HTTPException(400, "授权浏览器采集必须使用 browser-web-v1 协议")
+                if (collection_protocol.get("session_mode") != "new"
+                        or collection_protocol.get("follow_up_policy") != "none"
+                        or collection_protocol.get("login_state") != "logged_in"
+                        or collection_protocol.get("surface") != "desktop_web"):
+                    raise HTTPException(400, "首版授权浏览器仅支持桌面端、已登录的新会话和单轮无追问采集")
+            else:
+                raise HTTPException(400, "不支持的 Consumer Web 采集方法")
             if bool(collection_protocol.get("networking")) != (engines[0]["mode"] == "search"):
-                raise HTTPException(409, "采集协议的联网声明必须与人工目标的 memory/search 口径一致")
+                raise HTTPException(409, "采集协议的联网声明必须与 Consumer Web 目标的 memory/search 口径一致")
             if use_judge and not payload.get("judge_engine_id"):
-                raise HTTPException(409, "人工 Web 默认全量 Judge，必须选择一个独立 Provider Judge 引擎")
+                raise HTTPException(409, "Consumer Web 默认全量 Judge，必须选择一个独立 Provider Judge 引擎")
         if use_judge and payload.get("judge_engine_id"):
             judge_engine = one(conn, "SELECT * FROM engine_configs WHERE id=? AND project_id=? AND client_id=? AND enabled=1 AND kind!='manual_web'",
                                (payload.get("judge_engine_id"), project["id"], project["client_id"]))
@@ -194,8 +211,17 @@ def estimate_wave(conn, wave: dict) -> dict:
     return estimate_wave_cost(conn, wave)
 
 
-def _create_run(conn, project: dict, wave: dict, actor: int | None) -> dict:
+def _create_run(conn, project: dict, wave: dict, actor: int | None,
+                browser_session_id: int | None = None) -> dict:
     protocol = loads(wave["protocol_json"], {})
+    collection_protocol = protocol.get("collection_protocol") or {}
+    collection_method = collection_protocol.get("collection_method") or "manual"
+    browser_driver = collection_protocol.get("browser_driver") or ""
+    if collection_method == "browser_assisted":
+        from ..collectors import get_driver
+        browser_driver_version = get_driver(browser_driver).version
+    else:
+        browser_driver_version = ""
     attempt = (one(conn, "SELECT MAX(attempt_no) AS value FROM runs WHERE wave_id=?", (wave["id"],))["value"] or 0) + 1
     prompts = prompt_set_content(conn, protocol["prompt_set_id"])
     engines = [engine_execution(engine) for engine in frozen_engines(conn, wave)]
@@ -223,9 +249,15 @@ def _create_run(conn, project: dict, wave: dict, actor: int | None) -> dict:
                        "awaiting_collection" if manual_web else "queued", engine.get("model") if manual_web else None, now)
                       for engine in engines for item in prompts for round_no in range(1, int(protocol["repeats"]) + 1)])
     if manual_web:
-        conn.execute("""INSERT INTO web_collections(client_id,project_id,answer_id,status,created_at,updated_at)
-                        SELECT client_id,project_id,id,'awaiting_collection',?,? FROM answers WHERE run_id=?""",
-                     (now, now, run_id))
+        browser = collection_method == "browser_assisted"
+        conn.execute("""INSERT INTO web_collections(
+                            client_id,project_id,answer_id,status,collection_method,browser_phase,
+                            browser_session_id,browser_driver,browser_driver_version,browser_requested_by,created_at,updated_at)
+                        SELECT client_id,project_id,id,?,?,?,?,?,?,?,?,? FROM answers WHERE run_id=?""",
+                     ("collecting" if browser else "awaiting_collection", collection_method,
+                      "queued" if browser else "", browser_session_id if browser else None,
+                      browser_driver, browser_driver_version, actor if browser else None,
+                      now, now, run_id))
     conn.execute("UPDATE waves SET status='running' WHERE id=? AND status IN ('planned','data_ready','data_ready_with_warnings','analyzed')",
                  (wave["id"],))
     audit(conn, actor, project, "run", run_id, "create", None, {"wave_id": wave["id"], "attempt_no": attempt})
@@ -233,14 +265,29 @@ def _create_run(conn, project: dict, wave: dict, actor: int | None) -> dict:
 
 
 def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
-                         confirmation_reason: str, allow_manual: bool = False) -> dict:
+                         confirmation_reason: str, allow_manual: bool = False,
+                         confirm_browser: bool = False) -> dict:
     protocol = loads(wave["protocol_json"], {})
     if protocol.get("measurement_target") == "consumer_web" and not allow_manual:
-        raise HTTPException(409, "人工 Consumer Web 只能由用户显式创建采集 Run，调度器不会自动操作网页")
+        raise HTTPException(409, "Consumer Web 只能由用户显式创建采集 Run，调度器不会自动操作网页")
+    collection = protocol.get("collection_protocol") or {}
+    browser_session_id = None
+    if collection.get("collection_method") == "browser_assisted":
+        if not confirm_browser:
+            raise HTTPException(409, detail={"code": "browser_confirmation_required",
+                                            "message": "授权浏览器采集会把冻结问题发送到第三方消费者产品，请确认后重试"})
+        engine_id = int((protocol.get("engine_ids") or [0])[0])
+        session = one(conn, """SELECT id FROM browser_sessions
+                              WHERE project_id=? AND engine_config_id=? AND driver=? AND status='active'
+                              ORDER BY id DESC LIMIT 1""",
+                      (project["id"], engine_id, collection.get("browser_driver") or ""))
+        if not session:
+            raise HTTPException(409, "目标没有已验证的本机浏览器会话；请先由管理员完成连接")
+        browser_session_id = session["id"]
     estimate = estimate_wave_cost(conn, wave)
     decision = authorize_budget(conn, project, estimate, wave=wave, actor=actor,
                                 confirmation_reason=confirmation_reason)
-    run = _create_run(conn, project, wave, actor)
+    run = _create_run(conn, project, wave, actor, browser_session_id)
     reserve(conn, project, decision, wave=wave, run_id=run["id"], actor=actor)
     if decision.get("override_reason"):
         audit(conn, actor, project, "run", run["id"], "budget_override", None,
@@ -249,11 +296,14 @@ def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
 
 
 def create_run(project: dict, wave: dict, actor: int | None, conn=None,
-               confirmation_reason: str = "", allow_manual: bool = False) -> dict:
+               confirmation_reason: str = "", allow_manual: bool = False,
+               confirm_browser: bool = False) -> dict:
     if conn is not None:
-        return _create_budgeted_run(conn, project, wave, actor, confirmation_reason, allow_manual)
+        return _create_budgeted_run(conn, project, wave, actor, confirmation_reason, allow_manual,
+                                    confirm_browser)
     with transaction() as owned:
-        return _create_budgeted_run(owned, project, wave, actor, confirmation_reason, allow_manual)
+        return _create_budgeted_run(owned, project, wave, actor, confirmation_reason, allow_manual,
+                                    confirm_browser)
 
 
 def run_progress(conn, run_id: int) -> dict:
@@ -261,8 +311,30 @@ def run_progress(conn, run_id: int) -> dict:
         "SELECT status,COUNT(*) AS count FROM answers WHERE run_id=? GROUP BY status", (run_id,))}
     total = sum(counts.values())
     finished = sum(counts.get(status, 0) for status in ("succeeded", "failed", "cancelled"))
-    return {"total": total, "finished": finished, "progress": round(finished / total * 100, 1) if total else 0,
-            "by_status": counts}
+    result = {"total": total, "finished": finished,
+              "progress": round(finished / total * 100, 1) if total else 0,
+              "by_status": counts}
+    browser = one(conn, """SELECT c.browser_phase,c.browser_phase_detail,c.browser_heartbeat_at,
+                                  c.prompt_submitted_at,c.answer_id,p.text AS prompt_text
+                           FROM web_collections c JOIN answers a ON a.id=c.answer_id
+                           JOIN prompt_items p ON p.id=a.prompt_item_id
+                           WHERE a.run_id=? AND c.collection_method='browser_assisted'
+                             AND a.status='awaiting_collection'
+                           ORDER BY CASE c.browser_phase WHEN 'queued' THEN 1 ELSE 0 END,c.answer_id LIMIT 1""",
+                  (run_id,))
+    if browser:
+        action_required = one(conn, """SELECT COUNT(*) AS count FROM web_collections c
+                                      JOIN answers a ON a.id=c.answer_id
+                                      WHERE a.run_id=? AND a.status='awaiting_collection'
+                                        AND c.browser_phase IN ('awaiting_user','paused_unknown')""",
+                              (run_id,))["count"]
+        result["browser"] = {
+            "phase": browser["browser_phase"], "detail": browser["browser_phase_detail"],
+            "heartbeat_at": browser["browser_heartbeat_at"], "answer_id": browser["answer_id"],
+            "prompt": browser["prompt_text"], "prompt_submitted": bool(browser["prompt_submitted_at"]),
+            "action_required": action_required,
+        }
+    return result
 
 
 def _record_operations(conn, answer: dict, operations: list[dict], failure: dict | None = None,
@@ -310,7 +382,7 @@ def _insert_citations(conn, answer: dict, citations: list[dict], observations: l
         conn.execute("INSERT OR IGNORE INTO citations(client_id,project_id,answer_id,observation_id,raw_url,final_url,title,domain,source_type,content_hash,returned_at,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                      (answer["client_id"], answer["project_id"], answer["id"], linked[0] if len(linked) == 1 else None,
                       url, citation.get("final_url") or "", citation.get("title") or "", parsed.hostname,
-                      "人工记录的页面引用" if citation.get("origin") == "manual_page" else _classify_source(url, primary, settings),
+                      "Consumer Web 页面引用" if citation.get("origin") in ("manual_page", "browser_page") else _classify_source(url, primary, settings),
                       content_hash, citation.get("returned_at") or utc_now(), citation.get("origin") or "provider_returned"))
 
 
@@ -427,7 +499,8 @@ def process_answer(answer_id: int) -> None:
             collection = one(conn, "SELECT * FROM web_collections WHERE answer_id=?", (answer_id,))
         citations = loads(collection["citations_json"], []) if collection else []
         for citation in citations:
-            citation["origin"] = "manual_page"
+            citation["origin"] = ("browser_page" if collection.get("collection_method") == "browser_assisted"
+                                  else "manual_page")
             citation["returned_at"] = collection.get("observed_at") or utc_now()
     if not raw_text:
         try:

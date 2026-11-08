@@ -234,7 +234,7 @@ def release_gates(snapshot: dict) -> list[str]:
         if item.get("evidence_issues"):
             errors.append(f"{label}：{item['evidence_issues']} 条确认提及无法逐字回查原文")
         if item.get("web_evidence_issues"):
-            errors.append(f"{label}：{item['web_evidence_issues']} 条人工 Web 样本的原文、截图或冻结上下文未通过证据校验")
+            errors.append(f"{label}：{item['web_evidence_issues']} 条 Consumer Web 样本的原文、截图或冻结上下文未通过证据校验")
     if snapshot.get("comparison") and not snapshot["comparison"].get("comparable"):
         errors.append(snapshot["comparison"].get("reason") or "对比口径不一致")
     for opportunity in snapshot["opportunities"]:

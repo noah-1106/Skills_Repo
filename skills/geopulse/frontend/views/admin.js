@@ -10,13 +10,16 @@ export async function renderAdmin(root, ctx) {
     api.get(`/api/projects/${ctx.project.id}/alerts`).then((data) => data.items),
     api.get(`/api/projects/${ctx.project.id}/schedules`).then((data) => data.items),
   ]);
-  let users = [], members = [], operations = null, audit = [], retention = null;
+  let users = [], members = [], operations = null, audit = [], retention = null, browserSessions = {};
   if (ctx.role === "admin") {
     [members, audit] = await Promise.all([
       api.get(`/api/projects/${ctx.project.id}/memberships`).then((data) => data.items),
       api.get(`/api/projects/${ctx.project.id}/audit?limit=100`).then((data) => data.items),
     ]);
     if (ctx.user.global_role === "admin") users = await api.get("/api/users").then((data) => data.items);
+    await Promise.all(engines.filter((engine) => engine.kind === "manual_web").map(async (engine) => {
+      browserSessions[engine.id] = (await api.get(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`)).items;
+    }));
   }
   if (["admin", "analyst"].includes(ctx.role)) {
     [operations, retention] = await Promise.all([
@@ -35,7 +38,7 @@ export async function renderAdmin(root, ctx) {
   const tablist = tabs(availableTabs, tab, (value) => ctx.navigate("admin", { tab: value }));
   root.append(tablist);
   const panel = h("div", {});
-  if (tab === "engines") renderEngines(panel, ctx, engines);
+  if (tab === "engines") renderEngines(panel, ctx, engines, browserSessions);
   else if (tab === "members") renderMembers(panel, ctx, users, members);
   else if (tab === "schedules") renderSchedules(panel, ctx, waves, schedules, alerts);
   else if (tab === "operations") renderOperations(panel, ctx, operations);
@@ -49,37 +52,118 @@ function healthText(value) {
   return `${label(status)}${detail.length ? ` · ${detail.join(":")}` : ""}`;
 }
 
-function renderEngines(root, ctx, engines) {
+function browserSessionLabel(status) {
+  return { pending: "等待登录验证", active: "已连接", expired: "登录已失效", revoked: "已撤销" }[status] || label(status);
+}
+
+function renderEngines(root, ctx, engines, browserSessions = {}) {
   const add = ctx.role === "admin" ? h("button", { class: "button", onClick: () => engineDialog(ctx) }, "新增引擎") : null;
   const unhealthy = engines.filter((engine) => engine.health_status?.startsWith("unhealthy")).length;
   const providers = engines.filter((engine) => engine.kind !== "manual_web" && engine.enabled).length;
   const webTargets = engines.filter((engine) => engine.kind === "manual_web" && engine.enabled).length;
   root.append(h("div", { class: `inline-panel${unhealthy ? " warning-panel" : " emphasis"}` },
-    h("h2", {}, unhealthy ? `${unhealthy} 个 Provider 健康检查异常` : `${providers} 个 Provider · ${webTargets} 个人工 Web 目标可用于新测量`),
-    h("p", { class: "muted" }, "Provider API 与人工 Consumer Web 是两种独立测量口径。人工目标只保存 HTTPS 产品入口，不保存账号、Cookie、密码或 Token，也不执行网页自动化。冻结 Wave 后，编辑配置不会改写历史协议。")));
-  root.append(section("测量目标配置", "Provider 密钥单独保存在 0600 secret store；人工 Web 目标不配置密钥、价格或健康检查", dataTable(
+    h("h2", {}, unhealthy ? `${unhealthy} 个 Provider 健康检查异常` : `${providers} 个 Provider · ${webTargets} 个 Consumer Web 目标可用于新测量`),
+    h("p", { class: "muted" }, "Provider API、人工网页和授权浏览器是独立采集口径。Consumer Web 目标只保存 HTTPS 产品入口；网页登录会话只保存在本机受控浏览器目录，不进入引擎配置或数据库。冻结 Wave 后，编辑配置不会改写历史协议。")));
+  root.append(section("测量目标配置", "Provider 密钥单独保存在 0600 secret store；Consumer Web 目标不配置 API 密钥、价格或健康检查", dataTable(
     ["目标", "模型或产品入口", "测量口径", "连接状态", "状态", "操作"], engines.map((engine) => {
       const manual = engine.kind === "manual_web";
+      const sessions = browserSessions[engine.id] || [];
+      const currentSession = sessions.find((item) => ["active", "pending", "expired"].includes(item.status));
+      const sessionText = currentSession
+        ? `${browserSessionLabel(currentSession.status)} · ${currentSession.driver === "deepseek_web" ? "DeepSeek Web" : "Kimi Web"}`
+        : "仅人工采集可用";
       return [
-        h("div", {}, h("div", { class: "cell-title" }, engine.name), h("span", { class: "cell-sub" }, `${engine.vendor} · ${manual ? "人工采集" : engine.has_api_key ? "密钥已配置" : engine.kind === "demo" ? "本地演示" : "缺少密钥"}`)),
+        h("div", {}, h("div", { class: "cell-title" }, engine.name), h("span", { class: "cell-sub" }, `${engine.vendor} · ${manual ? "Consumer Web" : engine.has_api_key ? "密钥已配置" : engine.kind === "demo" ? "本地演示" : "缺少密钥"}`)),
         h("div", {}, manual ? engine.base_url : engine.model || "—", h("span", { class: "cell-sub" }, `${engine.kind} · ${manual ? "HTTPS 产品入口" : engine.base_url || "本地"}`)),
-        h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" || engine.kind === "deepseek_search" ? h("span", { class: "cell-sub" }, "Search + Chat；Search 失败不降级") : manual ? h("span", { class: "cell-sub" }, "由人工在页面观察并提交证据") : null),
-        manual ? h("div", {}, "不适用", h("span", { class: "cell-sub" }, "无 Provider 健康检查")) : h("div", {}, healthText(engine.health_status), engine.health_status ? h("span", { class: "cell-sub" }, "结果保存在当前配置，不改变历史 Run") : null),
+        h("div", {}, `${label(engine.mode)} · ${label(engine.measurement_target)}`, engine.kind === "kimi_search" || engine.kind === "deepseek_search" ? h("span", { class: "cell-sub" }, "Search + Chat；Search 失败不降级") : manual ? h("span", { class: "cell-sub" }, "人工或授权浏览器分别冻结采集方法") : null),
+        manual ? h("div", {}, sessionText, h("span", { class: "cell-sub" }, currentSession?.last_verified_at ? `最近验证 ${formatDate(currentSession.last_verified_at, ctx.project.timezone)}` : "无 Provider 健康检查")) : h("div", {}, healthText(engine.health_status), engine.health_status ? h("span", { class: "cell-sub" }, "结果保存在当前配置，不改变历史 Run") : null),
         badge(engine.enabled ? "enabled" : "disabled", engine.enabled ? "success" : "neutral"),
         ctx.role === "admin" ? h("div", { class: "button-group" },
           h("button", { class: "button small-button secondary", onClick: () => engineDialog(ctx, engine) }, "编辑"),
-          manual ? null : h("button", { class: "button small-button", onClick: () => healthCheck(ctx, engine) }, engine.kind === "demo" ? "检查演示引擎" : "预估并健康检查")) : h("span", { class: "muted" }, "只读"),
+          manual ? h("button", { class: "button small-button", onClick: () => browserSessionDialog(ctx, engine, sessions) }, "管理浏览器连接") : h("button", { class: "button small-button", onClick: () => healthCheck(ctx, engine) }, engine.kind === "demo" ? "检查演示引擎" : "预估并健康检查")) : h("span", { class: "muted" }, "只读"),
       ];
     })), [add]));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "连接与测量边界"), h("div", {},
-    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 与 DeepSeek 分别使用各自的 Search 协议，再交给 Chat 回答；Search 失败不会降级为记忆态。人工 Web 仅支持人工辅助采集；授权浏览器 Collector、持久登录、DOM 自动提取、验证码处理和多平台爬虫不在当前范围内。"))));
+    h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 与 DeepSeek 分别使用各自的 Search 协议，再交给 Chat 回答；Search 失败不会降级为记忆态。Consumer Web 可冻结人工采集，或通过独立 DeepSeek Web / Kimi Web Driver 使用本机授权浏览器。自动采集不绕过验证码、不混算 API 指标；其他平台尚未接入。"))));
+}
+
+function browserSessionDialog(ctx, engine, initialSessions) {
+  let sessions = [...initialSessions];
+  const driver = select([
+    { value: "deepseek_web", label: "DeepSeek 网页版" },
+    { value: "kimi_web", label: "Kimi 网页版" },
+  ], sessions[0]?.driver || (engine.vendor.toLowerCase().includes("kimi") ? "kimi_web" : "deepseek_web"));
+  const status = h("div", {});
+  const actions = h("div", { class: "form-actions" });
+  const revokeDetails = h("details", { class: "advanced danger-zone", hidden: true }, h("summary", {}, "撤销连接"), h("div", {},
+    h("p", { class: "muted" }, "撤销后不能再用该会话采集；本机采集器关闭浏览器后会删除对应 profile。历史回答与证据不受影响。"),
+    h("button", { class: "button danger", type: "button", onClick: () => {
+      const session = current();
+      if (!session) return;
+      confirmDialog("撤销本机浏览器会话", "将停止此会话的新采集，并清理其本机浏览器目录。该操作不会删除历史测量数据。", "确认撤销", async () => {
+        await api.post(`/api/projects/${ctx.project.id}/browser-sessions/${session.id}/revoke`, {});
+        modal.close(); toast("会话已撤销，profile 清理由本机采集器完成"); ctx.refresh();
+      }, true);
+    } }, "撤销当前会话")));
+  const form = h("form", {}, field("平台 Driver", driver, "只显示已实现 Driver；不是通用网页爬虫"),
+    h("p", { class: "muted small" }, "创建后，本机采集器会打开可见浏览器。请由你本人登录并处理验证码，再回来点击“验证并保存”。GeoPulse 不接收密码、Cookie 或账号别名。"),
+    status, actions, revokeDetails);
+  const modal = drawer(`本机浏览器连接 · ${engine.name}`, form);
+  const current = () => sessions.find((item) => item.driver === driver.value && ["pending", "active", "expired"].includes(item.status));
+  const refreshSessions = async () => {
+    sessions = (await api.get(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`)).items;
+    sync();
+  };
+  const verify = async () => {
+    const session = current();
+    if (!session) return;
+    await api.post(`/api/projects/${ctx.project.id}/browser-sessions/${session.id}/verify`, {});
+    toast("已请求验证本机会话");
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await refreshSessions();
+      const updated = current();
+      if (updated?.status === "active") { toast("浏览器会话已验证，可用于授权采集"); return; }
+      if (updated?.last_error) return;
+    }
+  };
+  const sync = () => {
+    const session = current();
+    revokeDetails.hidden = !session;
+    clear(status); clear(actions);
+    status.append(session ? h("div", { class: `inline-panel${session.status === "active" ? " emphasis" : " warning-panel"}` },
+      h("h3", {}, session.status === "active" ? "浏览器会话可用" : session.status === "pending" ? "等待本机登录与验证" : "登录已失效"),
+      h("p", {}, `${browserSessionLabel(session.status)}${session.last_verified_at ? ` · 最近验证 ${formatDate(session.last_verified_at, ctx.project.timezone)}` : ""}`),
+      session.last_error ? h("p", { class: "form-error" }, session.last_error) : null,
+      h("p", { class: "muted small" }, "采集器由应用 worker 或 run-worker 启动；不会自动重发结果不明的问题。")) : h("div", { class: "inline-panel" },
+      h("h3", {}, "尚未连接此平台"), h("p", {}, "人工采集仍可使用。只有创建自动采集 Run 时才需要已验证会话。")));
+    if (!session) {
+      actions.append(h("button", { class: "button", type: "button", onClick: async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const created = await api.post(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`, { driver: driver.value });
+          sessions.unshift(created); sync(); toast("本机浏览器正在打开，请完成登录");
+        } catch (error) { formError(form, error); button.disabled = false; }
+      } }, "打开浏览器并连接"));
+    } else {
+      actions.append(h("button", { class: "button", type: "button", onClick: (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        verify().catch((error) => formError(form, error)).finally(() => { button.disabled = false; });
+      } }, session.status === "active" ? "重新验证会话" : "我已完成登录，验证并保存"));
+    }
+  };
+  driver.addEventListener("change", sync);
+  form.addEventListener("submit", (event) => event.preventDefault());
+  sync();
 }
 
 function engineDialog(ctx, engine) {
   const rule = engine?.cost_rule || {};
   const name = input(engine?.name || "", { required: true });
   const vendor = input(engine?.vendor || "", { required: true, placeholder: "DeepSeek / Moonshot / GeoPulse" });
-  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "deepseek_search", label: "DeepSeek Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }, { value: "manual_web", label: "人工 Consumer Web（网页观察）" }], engine?.kind || "openai_compat");
+  const kind = select([{ value: "openai_compat", label: "OpenAI-compatible（记忆态）" }, { value: "kimi_search", label: "Kimi Search + Chat（检索态）" }, { value: "deepseek_search", label: "DeepSeek Search + Chat（检索态）" }, { value: "demo", label: "本地演示引擎" }, { value: "manual_web", label: "Consumer Web（网页观察）" }], engine?.kind || "openai_compat");
   const mode = select([{ value: "memory", label: "memory · 记忆态" }, { value: "search", label: "search · 检索态" }], engine?.mode || "memory");
   const model = input(engine?.model || "", { placeholder: "按厂商账号可用模型填写" });
   const baseUrl = input(engine?.base_url || "", { placeholder: "https://platform.example.com/v1" });
@@ -137,7 +221,7 @@ function engineDialog(ctx, engine) {
     baseUrlField.querySelector("label").textContent = manual ? "HTTPS 产品入口" : "Base URL";
     baseUrl.placeholder = manual ? "https://consumer.example.com/chat" : "https://platform.example.com/v1";
     boundaryNote.textContent = manual
-      ? "人工 Web 只保存产品入口和启用状态，不保存 API Key、Cookie、密码或 Token，不提供 Provider 价格、限流或健康检查。Provider 与人工目标不能互相改型。"
+      ? "Consumer Web 只保存产品入口和启用状态，不保存 API Key、Cookie、密码或 Token，不提供 Provider 价格、限流或健康检查。人工与授权浏览器在 Wave 中分别冻结；Provider 与 Consumer Web 目标不能互相改型。"
       : "当前 Provider 配置仅用于 provider_api。编辑价格不会改变已冻结 Wave 的预估与历史成本。";
   };
   const form = h("form", {}, h("div", { class: "form-grid" }, field("配置名称", name), field("厂商 / 产品", vendor), field("目标类型", kind), field("测量模式", mode),

@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .api import admin, auth, collections, entities, projects, prompts, reports, waves, workflow
 from .migrations import SCHEMA_VERSION, current_version
+from .services.browser_worker import BrowserWorker
 from .services.measurement import Worker
 from .services.scheduler import Scheduler
 
@@ -25,19 +26,24 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     disabled = os.environ.get("GEOPULSE_DISABLE_WORKER") == "1"
-    worker, scheduler = Worker(), Scheduler()
+    worker, scheduler, browser_worker = Worker(), Scheduler(), BrowserWorker()
+    browser_disabled = os.environ.get("GEOPULSE_DISABLE_BROWSER_WORKER") == "1"
     if not disabled:
         worker.start()
         scheduler.start()
+        if not browser_disabled:
+            browser_worker.start()
     app.state.worker = worker
     app.state.scheduler = scheduler
+    app.state.browser_worker = browser_worker
     yield
     scheduler.stop()
+    browser_worker.stop()
     worker.stop()
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="GeoPulse", version="2.2.0",
+    app = FastAPI(title="GeoPulse", version="2.3.0",
                   description="可复现、可对比、可审计的 GEO 客户交付系统", lifespan=lifespan)
 
     @app.middleware("http")
@@ -68,8 +74,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "2.2.0", "schema_version": current_version(),
-                "expected_schema": SCHEMA_VERSION, "worker": os.environ.get("GEOPULSE_DISABLE_WORKER") != "1"}
+        return {"status": "ok", "version": "2.3.0", "schema_version": current_version(),
+                "expected_schema": SCHEMA_VERSION, "worker": os.environ.get("GEOPULSE_DISABLE_WORKER") != "1",
+                "browser_worker": (os.environ.get("GEOPULSE_DISABLE_WORKER") != "1"
+                                   and os.environ.get("GEOPULSE_DISABLE_BROWSER_WORKER") != "1")}
 
     if config.FRONTEND.is_dir():
         app.mount("/static", StaticFiles(directory=str(config.FRONTEND)), name="static")

@@ -374,10 +374,15 @@ def execute(client, args, item):
     require_confirmation(args, item, body or {})
     if item.confirmation == "run":
         wave = wave_for_run(client, args, item, path)
-        real = requires_real_confirmation(wave)
+        protocol = wave["protocol"]
+        collection = protocol.get("collection_protocol") or {}
+        browser = collection.get("collection_method") == "browser_assisted"
+        body["confirm_browser"] = bool(args.confirm) if browser else False
+        real = requires_real_confirmation(wave) or browser
         if real and not args.confirm:
-            raise CliError("真实引擎调用未执行；请核对预估后另一次显式 --confirm",
-                           code="run_confirmation_required", detail={"wave_id": wave["id"], "estimate": wave["estimate"]},
+            raise CliError("真实引擎或授权网页调用未执行；请核对预估后另一次显式 --confirm",
+                           code="run_confirmation_required", detail={"wave_id": wave["id"], "estimate": wave["estimate"],
+                                                                     "browser_driver": collection.get("browser_driver")},
                            exit_code=4)
     if item.confirmation == "health" and args.confirm:
         if not args.estimate:

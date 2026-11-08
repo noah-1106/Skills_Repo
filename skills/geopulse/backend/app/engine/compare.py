@@ -29,7 +29,11 @@ def compare_metrics(baseline: dict, current: dict, baseline_protocol: dict, curr
         after_collection = current_protocol.get("collection_protocol") or {}
         cross_surface = (baseline_protocol.get("measurement_target") != current_protocol.get("measurement_target") or
                          before_collection.get("surface") != after_collection.get("surface") or
-                         before_collection.get("session_mode") != after_collection.get("session_mode"))
+                         before_collection.get("session_mode") != after_collection.get("session_mode") or
+                         before_collection.get("product_url") != after_collection.get("product_url") or
+                         before_collection.get("platform") != after_collection.get("platform") or
+                         before_collection.get("collection_method") != after_collection.get("collection_method") or
+                         before_collection.get("browser_driver") != after_collection.get("browser_driver"))
         result = {**check, "reason": "两次测量口径不同，拒绝输出严格前后变化"}
         if cross_surface:
             result.update({"exploratory": True, "comparison_scope": "cross_surface",

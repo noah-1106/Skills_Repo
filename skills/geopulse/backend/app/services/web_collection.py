@@ -26,19 +26,27 @@ ACTUAL_CONTEXT_KEYS = {
     "surface", "page_mode", "networking", "deep_thinking", "deep_research", "session_mode",
     "login_state", "account_type", "region", "language", "context_clearing", "follow_up_policy",
 }
+COLLECTION_PUBLIC_FIELDS = {
+    "id", "client_id", "project_id", "answer_id", "status", "draft_text", "actual_url",
+    "observed_mode", "observed_at", "timezone", "collector_id", "retrieval_status", "notes",
+    "failure_type", "failure_detail", "submitted_at", "content_purged_at", "created_at", "updated_at",
+    "collection_method", "browser_phase", "browser_driver", "browser_driver_version",
+    "browser_attempt_count", "browser_heartbeat_at", "browser_send_started_at", "prompt_submitted_at",
+    "conversation_url", "browser_phase_detail",
+}
 
 
 def _manual_answer(conn, project: dict, answer_id: int) -> tuple[dict, dict, dict]:
     answer = one(conn, "SELECT a.*,r.wave_id,r.snapshot_json,w.protocol_json FROM answers a JOIN runs r ON r.id=a.run_id JOIN waves w ON w.id=r.wave_id WHERE a.id=? AND a.project_id=? AND a.client_id=?",
                  (answer_id, project["id"], project["client_id"]))
     if not answer:
-        raise HTTPException(404, "人工采集回答不存在或不属于当前项目")
+        raise HTTPException(404, "Consumer Web 采集回答不存在或不属于当前项目")
     protocol = loads(answer["protocol_json"], {})
     if protocol.get("measurement_target") != "consumer_web":
-        raise HTTPException(409, "该回答不是人工 Consumer Web 采集任务")
+        raise HTTPException(409, "该回答不是 Consumer Web 采集任务")
     collection = one(conn, "SELECT * FROM web_collections WHERE answer_id=? AND project_id=?", (answer_id, project["id"]))
     if not collection:
-        raise HTTPException(409, "该回答缺少人工采集记录")
+        raise HTTPException(409, "该回答缺少 Consumer Web 采集记录")
     return answer, collection, protocol
 
 
@@ -54,13 +62,14 @@ def attachment_public(row: dict) -> dict:
 
 
 def collection_public(conn, answer: dict, collection: dict, protocol: dict, *, internal: bool = True) -> dict:
-    result = dict(collection)
-    result["session_context"] = loads(result.pop("session_context_json"), {})
-    citations = loads(result.pop("citations_json"), [])
+    result = {key: collection.get(key) for key in COLLECTION_PUBLIC_FIELDS if key in collection}
+    result["session_context"] = loads(collection.get("session_context_json"), {})
+    citations = loads(collection.get("citations_json"), [])
     if not internal:
         result["draft_text"] = None
         result["notes"] = ""
         result["failure_detail"] = ""
+        result["browser_phase_detail"] = ""
         citations = [{key: item.get(key, "") for key in ("url", "title")} for item in citations]
     result["citations"] = citations
     result["answer_status"] = answer["status"]
@@ -98,8 +107,14 @@ def _draft_values(payload: dict) -> dict:
     }
 
 
+def _require_manual(collection: dict) -> None:
+    if collection.get("collection_method") != "manual":
+        raise HTTPException(409, "授权浏览器任务不能通过人工草稿或证据接口改录；请使用采集恢复操作")
+
+
 def save_draft(conn, project: dict, answer_id: int, payload: dict, actor: int) -> dict:
     answer, collection, protocol = _manual_answer(conn, project, answer_id)
+    _require_manual(collection)
     _mutable(answer, collection)
     values = _draft_values(payload)
     now = utc_now()
@@ -131,8 +146,11 @@ def _validate_image(content: bytes, media_type: str) -> None:
 
 
 def upload_attachment(conn, project: dict, answer_id: int, kind: str, filename: str,
-                      media_type: str, content: bytes, expected_sha256: str, actor: int) -> dict:
+                      media_type: str, content: bytes, expected_sha256: str, actor: int,
+                      *, allow_browser: bool = False) -> dict:
     answer, collection, _ = _manual_answer(conn, project, answer_id)
+    if not allow_browser:
+        _require_manual(collection)
     _mutable(answer, collection)
     if kind not in ATTACHMENT_TYPES or media_type not in ATTACHMENT_TYPES[kind]:
         raise HTTPException(400, "附件类型仅支持 PNG/JPEG/WebP 截图、text/html 或 text/plain")
@@ -162,6 +180,7 @@ def delete_attachment(conn, project: dict, attachment_id: int, actor: int) -> di
     if not row:
         raise HTTPException(404, "附件不存在或不属于当前项目")
     answer, collection, _ = _manual_answer(conn, project, row["answer_id"])
+    _require_manual(collection)
     _mutable(answer, collection)
     conn.execute("DELETE FROM answer_attachments WHERE id=?", (attachment_id,))
     audit(conn, actor, project, "answer_attachment", attachment_id, "delete_draft", attachment_public(row), None)
@@ -210,9 +229,17 @@ def _validate_submission(conn, answer: dict, collection: dict, protocol: dict, v
         _validate_image(content, screenshot["media_type"])
 
 
-def submit_collection(conn, project: dict, answer_id: int, payload: dict, actor: int) -> dict:
+def submit_collection(conn, project: dict, answer_id: int, payload: dict, actor: int,
+                      *, allow_browser: bool = False) -> dict:
     answer, collection, protocol = _manual_answer(conn, project, answer_id)
+    browser = collection.get("collection_method") == "browser_assisted"
+    if browser and not allow_browser:
+        raise HTTPException(409, "授权浏览器任务只能由 Collector 提交；人工降级请另建人工 Wave/Run")
+    if not browser:
+        _require_manual(collection)
     _mutable(answer, collection)
+    if answer.get("raw_text") is not None:
+        raise HTTPException(409, "原始回答已存在，任何重采或 Judge 重试都不能覆盖")
     values = _draft_values(payload)
     _validate_submission(conn, answer, collection, protocol, values)
     now = utc_now()
@@ -231,9 +258,10 @@ def submit_collection(conn, project: dict, answer_id: int, payload: dict, actor:
         parsed = urllib.parse.urlparse(item["url"])
         citation_hash = hashlib.sha256(((item.get("title") or "") + (item.get("text") or "")).encode()).hexdigest()
         conn.execute("""INSERT INTO citations(client_id,project_id,answer_id,raw_url,final_url,title,domain,source_type,
-                        content_hash,returned_at,origin) VALUES(?,?,?,?,?,?,?,?,?,?, 'manual_page')""",
+                        content_hash,returned_at,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                      (project["client_id"], project["id"], answer_id, item["url"], item["url"], item.get("title") or "",
-                      parsed.hostname, "人工记录的页面引用", citation_hash, values["observed_at"]))
+                      parsed.hostname, "授权浏览器提取的页面引用" if browser else "人工记录的页面引用",
+                      citation_hash, values["observed_at"], "browser_page" if browser else "manual_page"))
     audit(conn, actor, project, "web_collection", collection["id"], "submit", None,
           {"answer_id": answer_id, "raw_text_sha256": digest, "citations": len(values["citations"]),
            "screenshots": one(conn, "SELECT COUNT(*) AS count FROM answer_attachments WHERE answer_id=? AND kind='screenshot'", (answer_id,))["count"]})

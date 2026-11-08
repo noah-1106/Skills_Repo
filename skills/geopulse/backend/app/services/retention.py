@@ -72,7 +72,8 @@ def _execute(conn, project: dict, actor: int | None) -> dict:
             citations = loads(collection["citations_json"], [])
             for citation in citations:
                 citation["text"] = ""
-            conn.execute("UPDATE web_collections SET draft_text='',citations_json=?,content_purged_at=?,updated_at=? WHERE id=?",
+            conn.execute("""UPDATE web_collections SET draft_text='',citations_json=?,conversation_url='',
+                            browser_phase_detail='',content_purged_at=?,updated_at=? WHERE id=?""",
                          (dumps(citations), utc_now(), utc_now(), collection["id"]))
     finished = utc_now()
     run_id = conn.execute("INSERT INTO retention_runs(client_id,project_id,cutoff,status,candidate_count,purged_count,actor,created_at,finished_at) VALUES(?,?,?,'succeeded',?,?,?,?,?)",
