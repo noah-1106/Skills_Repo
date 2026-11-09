@@ -27,6 +27,15 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **当前版本 / Version**：1.1.0
 - **发布日期 / Date**：2026-03-15
 
+#### company-name-check
+- **技能名称 / Name**：企业字号核验 / Company Name Check
+- **技能描述 / Description**：给一批候选公司名，判断能不能过工商核验、有没有撞上别人的品牌或商标。双通道：国家市场监管总局名称开放查询（免登录，弱初筛）+ 北京 e 窗通名称开放查询（复用已登录浏览器会话，判别力强）。自动处理算式验证码、token 链式刷新与限流重试，内置品牌词库单独标注 IP 冲突，输出字号核验与品牌/IP 两列判定 / Batch-check candidate company names against official name registries and flag brand/trademark collisions. Two channels: SAMR open name query (no login, weak pre-screen) and Beijing e-window open query (reuses a logged-in browser session, far more discriminative). Handles arithmetic CAPTCHAs, chained tokens and rate limits; ships a brand watchlist and reports registry and IP verdicts as separate columns
+- **当前版本 / Version**：1.0.0
+- **发布日期 / Date**：2026-11-09
+- **安装 / Install**：`pip install -r skills/company-name-check/requirements.txt`，另需系统 Chrome 与 `tesseract`；全国通道 `python3 scripts/check_national.py 字号A 字号B --trade 科技`，北京通道 `python3 scripts/check_beijing.py 字号A 字号B --profile <已登录Chrome配置目录> --trade 科技`，品牌扫描 `python3 scripts/brand_scan.py --json 结果.json`
+- **验证 / Verify**：内置对照实验（腾讯 / 阿里巴巴 / 蓝宇），实测同名字在两通道判别力差 200 倍（蓝宇：总局 1 条 vs 北京 209 条），可据此判断通道是否正常
+- **边界 / Limits**：开放库为字符包含匹配，0 条不等于工商必然通过（读音、字形近似需「名称自主申报」终判）；商标终判须登录中国商标网按第 9/35/42 类检索，脚本不代查；官方站点对高频请求敏感，禁止批量刷
+
 #### scribe
 - **技能名称 / Name**：本地录音转写 / Local Audio Transcription
 - **技能描述 / Description**：音频/视频 → 带时间戳文字稿（TXT/SRT/JSON），可选说话人标记（CAM++）。常驻本地服务，**Agent 可自动调用**（上传转写 + 下载留存全自动闭环）。自包含跨平台：代码全在 skill 内，首次 setup.py 自动装依赖 + 下载模型 / Audio/video → timestamped transcript (TXT/SRT/JSON), optional speaker diarization (CAM++). Persistent local service with **full Agent automation** (upload → transcribe → download loop). Self-contained & cross-platform: all code in skill, setup.py installs deps + downloads models on first run

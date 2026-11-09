@@ -1,0 +1,9 @@
+# company-name-check 依赖
+# 安装：pip install -r requirements.txt
+#
+# 另需系统工具：
+#   - Google Chrome（脚本以 channel="chrome" 启动）
+#   - tesseract（验证码 OCR），macOS: brew install tesseract；Linux: apt install tesseract-ocr
+
+playwright>=1.40
+pillow>=9.0
