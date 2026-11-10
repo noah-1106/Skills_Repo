@@ -37,8 +37,10 @@ def test_hard_budget_counts_active_reservation_and_cancel_releases(client):
     wave = production_wave(client, engine)
     estimate = wave["estimate"]
     set_budget(client, amount=estimate["max_estimated_cost"])
-    run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs")["run"]
-    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs", expected=409)
+    run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+              json={"confirm_judge_disabled": True})["run"]
+    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+                json={"confirm_judge_disabled": True}, expected=409)
     assert error["detail"]["code"] == "budget_exceeded"
     with connect() as conn:
         reservation = one(conn, "SELECT * FROM budget_reservations WHERE run_id=?", (run["id"],))
@@ -47,17 +49,19 @@ def test_hard_budget_counts_active_reservation_and_cancel_releases(client):
     api(client, "POST", f"/api/projects/{client.project_id}/runs/{run['id']}/cancel")
     with connect() as conn:
         assert one(conn, "SELECT status FROM budget_reservations WHERE id=?", (reservation["id"],))["status"] == "released"
-    api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs")
+    api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+        json={"confirm_judge_disabled": True})
 
 
 def test_soft_budget_requires_reason_and_writes_audit(client):
     engine = production_engine(client)
     wave = production_wave(client, engine)
     set_budget(client, hard_limit=False, amount=0.01)
-    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs", expected=409)
+    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+                json={"confirm_judge_disabled": True}, expected=409)
     assert error["detail"]["code"] == "budget_confirmation_required"
     run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
-              json={"budget_confirmation_reason": "客户已确认本次补充测量费用"})["run"]
+              json={"budget_confirmation_reason": "客户已确认本次补充测量费用", "confirm_judge_disabled": True})["run"]
     with connect() as conn:
         reservation = one(conn, "SELECT * FROM budget_reservations WHERE run_id=?", (run["id"],))
         assert reservation["confirmed_reason"] == "客户已确认本次补充测量费用"
@@ -69,7 +73,8 @@ def test_hard_budget_rejects_unknown_price_and_reports_daily_wave_scopes(client)
     engine = production_engine(client, input_per_million=None)
     wave = production_wave(client, engine)
     set_budget(client, amount=100, daily_amount=100, wave_amount=100)
-    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs", expected=409)
+    error = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+                json={"confirm_judge_disabled": True}, expected=409)
     assert error["detail"]["code"] == "budget_cost_unknown"
     with connect() as conn:
         assert one(conn, "SELECT COUNT(*) AS count FROM runs WHERE wave_id=?", (wave["id"],))["count"] == 0
@@ -81,13 +86,15 @@ def test_hard_budget_rejects_unknown_price_and_reports_daily_wave_scopes(client)
                       "estimated_input_tokens": 1000, "estimated_output_tokens": 1000},
     })
     # Wave 冻结的缺失价格不会被后续补价静默改写。
-    assert api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs", expected=409)["detail"]["code"] == "budget_cost_unknown"
+    assert api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+               json={"confirm_judge_disabled": True}, expected=409)["detail"]["code"] == "budget_cost_unknown"
 
 
 def test_run_snapshot_is_frozen_and_public_response_has_no_secret_or_price(client):
     engine = production_engine(client)
     wave = production_wave(client, engine)
-    run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs")["run"]
+    run = api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+              json={"confirm_judge_disabled": True})["run"]
     assert "secret_ref" not in str(run) and "cost_rule" not in str(run)
     api(client, "PUT", f"/api/projects/{client.project_id}/engines/{engine['id']}", json={
         "name": "修改后的引擎", "vendor": "Test", "kind": "openai_compat", "model": "changed-v2",

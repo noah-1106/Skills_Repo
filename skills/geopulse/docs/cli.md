@@ -55,14 +55,19 @@ prompt-set       list / create / get / import / scaffold / review / status /
 entity           list / create / review / version / pool-diff
 engine           list / create / update / health
 wave             list / create / get / run / official / status
-run              get / answers / metrics / wait / cancel / retry
+run              get / handoff / answers / metrics / wait / cancel / retry
+judge-batch      list / create / get / cancel / retry
 answer           get / revise
 collection       get / save / submit / fail / resume
 browser-session  list / create / verify / revoke
 evidence         upload / download / delete
 compare          同口径或跨 surface 摘要
 opportunity      generate / list / review / status / action
-action           list / status
+action           list / get / status
+brief            create / update / approve
+asset            create / update / approve
+publication      create
+remeasurement    create / assess
 event            list / create
 report           list / create / get / status / export
 schedule         list / create / update
@@ -122,6 +127,33 @@ $CTL report export --project 1 --report 7 \
 Shell 变量只缩短示例；也可以重复写完整解释器路径。`run wait` 只轮询 GET，等待超时不等于 Run 失败。
 
 `measure run --project 1 --spec wave.json` 是少量组合命令之一，按 `wave create → run create → 可选 wait/metrics` 编排。遇到真实调用确认或预算节点会立即停止并输出 `waiting_for_decision`，不会越过人工决定继续创建 Run。
+
+### Judge 补判与交付交接
+
+```bash
+$CTL judge-batch list --project 1 --run 12
+$CTL judge-batch create --project 1 --run 12 --spec judge-batch.json --confirm
+$CTL judge-batch get --project 1 --judge-batch 3
+$CTL judge-batch retry --project 1 --judge-batch 3 --confirm
+$CTL run handoff --project 1 --run 12
+```
+
+补判 spec 对应 `judge_engine_id`、可选 `answer_ids/judge_overrides` 和确认字段。它只追加 Observation revision，不重新请求 answer/search。真实补判创建与明确失败重试分别确认；`interrupted_unknown` 或其他 `outcome_unknown=1` 的项不能自动重试。handoff 只读，不写外部业务孪生或工时。
+
+### Intervention 证据链
+
+```bash
+$CTL action get --project 1 --action 3
+$CTL brief update --project 1 --brief 8 --spec brief.json
+$CTL brief approve --project 1 --brief 8 --confirm
+$CTL asset create --project 1 --action 3 --spec asset.json
+$CTL asset approve --project 1 --asset 5 --confirm
+$CTL publication create --project 1 --action 3 --spec publication.json --confirm
+$CTL remeasurement create --project 1 --action 3 --spec rounds.json
+$CTL remeasurement assess --project 1 --round 2 --spec assessment.json --confirm
+```
+
+CLI 只透传 HTTP 合同，不在本地复制 evidence ref、审批、固定 Run 或比较规则。`--action`、`--brief`、`--asset`、`--round` 分别映射路径 ID。Brief/Asset 审批和 Publication/评估需要显式确认；Provider 调度只创建 Run，Consumer Web 仍须走显式采集命令。旧 `action status` 单发布/单复测合同保留兼容，但新交付应使用上述分离命令。
 
 ## 6. 真实调用与写操作确认
 

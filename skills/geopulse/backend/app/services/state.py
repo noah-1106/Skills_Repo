@@ -31,7 +31,7 @@ TRANSITIONS = {
         "draft": {"review", "stopped"}, "review": {"approved", "draft"},
         "approved": {"published", "draft"}, "published": {"remeasure_due"},
         "remeasure_due": {"verified", "not_effective", "stopped"},
-        "verified": set(), "not_effective": {"draft"}, "stopped": {"draft"},
+        "verified": set(), "not_effective": set(), "stopped": set(),
     },
     "reports": {
         "draft": {"data_checked"}, "data_checked": {"strategy_reviewed", "draft"},
@@ -47,7 +47,9 @@ def logical_id(prefix: str) -> str:
 
 def scoped_object(conn, table: str, object_id: int, project: dict) -> dict:
     allowed = {"waves", "runs", "answers", "prompt_sets", "brand_entities", "opportunities",
-               "actions", "reports", "engine_configs", "observations", "schedules", "alerts"}
+               "actions", "reports", "engine_configs", "observations", "schedules", "alerts",
+               "content_briefs", "action_assets", "asset_publications", "action_remeasurement_rounds",
+               "judge_batches"}
     if table not in allowed:
         raise ValueError("unsupported scoped table")
     row = one(conn, f"SELECT * FROM {table} WHERE id=? AND project_id=? AND client_id=?",

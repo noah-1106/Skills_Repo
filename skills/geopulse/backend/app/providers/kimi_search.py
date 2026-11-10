@@ -10,6 +10,7 @@ from .openai_compat import OpenAICompatProvider
 
 class KimiSearchProvider(OpenAICompatProvider):
     name = "kimi_search"
+    output_token_parameter = "max_completion_tokens"
     pipeline_version = "kimi-search-basic-chat-v1"
 
     def ask(self, prompt: str, protocol: dict) -> ProviderResult:

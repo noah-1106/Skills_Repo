@@ -1,6 +1,7 @@
 import { api } from "../api.js";
 import { executionFields } from "../execution.js";
-import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, tabs, tabPanel, label, formatDate, downloadJson, handleBudgetError } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, tabs, tabPanel, label, formatDate, downloadJson, handleBudgetError, onSubmit } from "../components.js";
+import { toDateTimeLocal, fromDateTimeLocal, dateInTimezone } from "../datetime.js";
 
 export async function renderAdmin(root, ctx) {
   const requested = ctx.params.get("tab") || "engines";
@@ -64,7 +65,7 @@ function renderEngines(root, ctx, engines, browserSessions = {}) {
   root.append(h("div", { class: `inline-panel${unhealthy ? " warning-panel" : " emphasis"}` },
     h("h2", {}, unhealthy ? `${unhealthy} 个 Provider 健康检查异常` : `${providers} 个 Provider · ${webTargets} 个 Consumer Web 目标可用于新测量`),
     h("p", { class: "muted" }, "Provider API、人工网页和授权浏览器是独立采集口径。Consumer Web 目标只保存 HTTPS 产品入口；网页登录会话只保存在本机受控浏览器目录，不进入引擎配置或数据库。冻结 Wave 后，编辑配置不会改写历史协议。")));
-  root.append(section("测量目标配置", "Provider 密钥单独保存在 0600 secret store；Consumer Web 目标不配置 API 密钥、价格或健康检查", dataTable(
+  const engineTable = dataTable(
     ["目标", "模型或产品入口", "测量口径", "连接状态", "状态", "操作"], engines.map((engine) => {
       const manual = engine.kind === "manual_web";
       const sessions = browserSessions[engine.id] || [];
@@ -82,7 +83,9 @@ function renderEngines(root, ctx, engines, browserSessions = {}) {
           h("button", { class: "button small-button secondary", onClick: () => engineDialog(ctx, engine) }, "编辑"),
           manual ? h("button", { class: "button small-button", onClick: () => browserSessionDialog(ctx, engine, sessions) }, "管理浏览器连接") : h("button", { class: "button small-button", onClick: () => healthCheck(ctx, engine) }, engine.kind === "demo" ? "检查演示引擎" : "预估并健康检查")) : h("span", { class: "muted" }, "只读"),
       ];
-    })), [add]));
+    }));
+  engineTable.classList.add("engine-table");
+  root.append(section("测量目标配置", "Provider 密钥单独保存在 0600 secret store；Consumer Web 目标不配置 API 密钥、价格或健康检查", engineTable, [add]));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "连接与测量边界"), h("div", {},
     h("p", { class: "muted" }, "普通 OpenAI-compatible 配置只用于 memory。Kimi 与 DeepSeek 分别使用各自的 Search 协议，再交给 Chat 回答；Search 失败不会降级为记忆态。Consumer Web 可冻结人工采集，或通过独立 DeepSeek Web / Kimi Web Driver 使用本机授权浏览器。自动采集不绕过验证码、不混算 API 指标；其他平台尚未接入。"))));
 }
@@ -95,6 +98,8 @@ function browserSessionDialog(ctx, engine, initialSessions) {
   ], sessions[0]?.driver || (engine.vendor.toLowerCase().includes("kimi") ? "kimi_web" : "deepseek_web"));
   const status = h("div", {});
   const actions = h("div", { class: "form-actions" });
+  let verifying = false;
+  let verificationRun = 0;
   const revokeDetails = h("details", { class: "advanced danger-zone", hidden: true }, h("summary", {}, "撤销连接"), h("div", {},
     h("p", { class: "muted" }, "撤销后不能再用该会话采集；本机采集器关闭浏览器后会删除对应 profile。历史回答与证据不受影响。"),
     h("button", { class: "button danger", type: "button", onClick: () => {
@@ -108,23 +113,40 @@ function browserSessionDialog(ctx, engine, initialSessions) {
   const form = h("form", {}, field("平台 Driver", driver, "只显示已实现 Driver；不是通用网页爬虫"),
     h("p", { class: "muted small" }, "创建后，本机采集器会打开可见浏览器。请由你本人登录并处理验证码，再回来点击“验证并保存”。GeoPulse 不接收密码、Cookie 或账号别名。"),
     status, actions, revokeDetails);
-  const modal = drawer(`本机浏览器连接 · ${engine.name}`, form);
+  const modal = drawer(`本机浏览器连接 · ${engine.name}`, form, { onClose: () => { verificationRun += 1; } });
   const current = () => sessions.find((item) => item.driver === driver.value && ["pending", "active", "expired"].includes(item.status));
-  const refreshSessions = async () => {
-    sessions = (await api.get(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`)).items;
+  const refreshSessions = async (run) => {
+    const result = (await api.get(`/api/projects/${ctx.project.id}/engines/${engine.id}/browser-sessions`)).items;
+    if (run !== verificationRun || !modal.dialog.isConnected) return false;
+    sessions = result;
     sync();
+    return true;
   };
   const verify = async () => {
     const session = current();
-    if (!session) return;
-    await api.post(`/api/projects/${ctx.project.id}/browser-sessions/${session.id}/verify`, {});
-    toast("已请求验证本机会话");
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      await refreshSessions();
-      const updated = current();
-      if (updated?.status === "active") { toast("浏览器会话已验证，可用于授权采集"); return; }
-      if (updated?.last_error) return;
+    if (!session || verifying) return;
+    const run = ++verificationRun;
+    verifying = true;
+    form.setAttribute("aria-busy", "true");
+    sync();
+    try {
+      await api.post(`/api/projects/${ctx.project.id}/browser-sessions/${session.id}/verify`, {});
+      toast("已请求验证本机会话");
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (run !== verificationRun || !modal.dialog.isConnected) return;
+        if (!await refreshSessions(run)) return;
+        const updated = current();
+        if (updated?.status === "active") { toast("浏览器会话已验证，可用于授权采集"); return; }
+        if (updated?.last_error) return;
+      }
+      throw new Error("60 秒内未完成会话验证。请检查本机浏览器和采集器状态后重试。");
+    } finally {
+      if (run === verificationRun && modal.dialog.isConnected) {
+        verifying = false;
+        form.setAttribute("aria-busy", "false");
+        sync();
+      }
     }
   };
   const sync = () => {
@@ -137,6 +159,7 @@ function browserSessionDialog(ctx, engine, initialSessions) {
       session.last_error ? h("p", { class: "form-error" }, session.last_error) : null,
       h("p", { class: "muted small" }, "采集器由应用 worker 或 run-worker 启动；不会自动重发结果不明的问题。")) : h("div", { class: "inline-panel" },
       h("h3", {}, "尚未连接此平台"), h("p", {}, "人工采集仍可使用。只有创建自动采集 Run 时才需要已验证会话。")));
+    if (verifying) status.append(h("p", { class: "inline-panel", role: "status" }, "正在验证本机会话，最长约 60 秒。可以继续查看此对话框，或关闭后稍后再试。"));
     if (!session) {
       actions.append(h("button", { class: "button", type: "button", onClick: async (event) => {
         const button = event.currentTarget;
@@ -147,14 +170,17 @@ function browserSessionDialog(ctx, engine, initialSessions) {
         } catch (error) { formError(form, error); button.disabled = false; }
       } }, "打开浏览器并连接"));
     } else {
-      actions.append(h("button", { class: "button", type: "button", onClick: (event) => {
-        const button = event.currentTarget;
-        button.disabled = true;
-        verify().catch((error) => formError(form, error)).finally(() => { button.disabled = false; });
-      } }, session.status === "active" ? "重新验证会话" : "我已完成登录，验证并保存"));
+      actions.append(h("button", { class: "button", type: "button", disabled: verifying, onClick: () => {
+        verify().catch((error) => formError(form, error));
+      } }, verifying ? "正在验证本机会话…" : session.status === "active" ? "重新验证会话" : "我已完成登录，验证并保存"));
     }
   };
-  driver.addEventListener("change", sync);
+  driver.addEventListener("change", () => {
+    verificationRun += 1;
+    verifying = false;
+    form.setAttribute("aria-busy", "false");
+    sync();
+  });
   form.addEventListener("submit", (event) => event.preventDefault());
   sync();
 }
@@ -231,34 +257,31 @@ function engineDialog(ctx, engine) {
   else if (engine) kind.querySelector("option[value='manual_web']").disabled = true;
   const modal = drawer(engine ? `编辑引擎 · ${engine.name}` : "新增引擎", form, { wide: true });
   kind.addEventListener("change", syncKind); syncKind();
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  onSubmit(form, async () => {
     const numberOrNull = (control) => control.value === "" ? null : Number(control.value);
     const costRule = { currency: currency.value, estimated_input_tokens: Number(estimatedInput.value), estimated_output_tokens: Number(estimatedOutput.value) };
     [["input_per_million", inputPrice], ["output_per_million", outputPrice], ["search_per_call", searchPrice],
       ["judge_input_per_million", judgeInput], ["judge_output_per_million", judgeOutput]].forEach(([key, control]) => {
       if (control.value !== "") costRule[key] = numberOrNull(control);
     });
-    try {
-      const manual = kind.value === "manual_web";
-      const optionalNumber = (control) => control.value === "" ? null : Number(control.value);
-      const boolValue = (control) => control.value === "" ? null : control.value === "true";
-      const allowed = allowedTemperatures.value.trim();
-      const capabilityValues = {
-        context_window: optionalNumber(contextWindow), max_output_tokens: optionalNumber(maxOutput),
-        supports_temperature: boolValue(supportsTemperature),
-        allowed_temperatures: allowed ? allowed.split(",").map((value) => Number(value.trim())) : null,
-        supports_json_mode: boolValue(supportsJson), reasoning_tokens_share_output_budget: boolValue(sharedReasoning),
-      };
-      if (capabilityValues.allowed_temperatures?.some((value) => !Number.isFinite(value))) throw new Error("允许的 temperatures 必须是逗号分隔的数值");
-      const payload = { name: name.value, vendor: vendor.value, kind: kind.value, mode: mode.value, model: manual ? "" : model.value, base_url: baseUrl.value,
-        api_key: manual ? "" : apiKey.value || (engine ? "__KEEP__" : ""), measurement_target: manual ? "consumer_web" : "provider_api",
-        timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: manual ? {} : costRule,
-        capabilities: manual ? {} : capabilityValues, answer_defaults: manual ? {} : answerDefaults.read(),
-        judge_defaults: manual ? {} : judgeDefaults.read(), health_defaults: manual ? {} : healthDefaults.read() };
-      await (engine ? api.put(`/api/projects/${ctx.project.id}/engines/${engine.id}`, payload) : api.post(`/api/projects/${ctx.project.id}/engines`, payload));
-      modal.close(); toast("引擎配置已保存，密钥未回显"); ctx.refresh();
-    } catch (error) { formError(form, error); }
+    const manual = kind.value === "manual_web";
+    const optionalNumber = (control) => control.value === "" ? null : Number(control.value);
+    const boolValue = (control) => control.value === "" ? null : control.value === "true";
+    const allowed = allowedTemperatures.value.trim();
+    const capabilityValues = {
+      context_window: optionalNumber(contextWindow), max_output_tokens: optionalNumber(maxOutput),
+      supports_temperature: boolValue(supportsTemperature),
+      allowed_temperatures: allowed ? allowed.split(",").map((value) => Number(value.trim())) : null,
+      supports_json_mode: boolValue(supportsJson), reasoning_tokens_share_output_budget: boolValue(sharedReasoning),
+    };
+    if (capabilityValues.allowed_temperatures?.some((value) => !Number.isFinite(value))) throw new Error("允许的 temperatures 必须是逗号分隔的数值");
+    const payload = { name: name.value, vendor: vendor.value, kind: kind.value, mode: mode.value, model: manual ? "" : model.value, base_url: baseUrl.value,
+      api_key: manual ? "" : apiKey.value || (engine ? "__KEEP__" : ""), measurement_target: manual ? "consumer_web" : "provider_api",
+      timeout: Number(timeout.value), rate_limit: Number(rate.value), enabled: enabled.control.checked, cost_rule: manual ? {} : costRule,
+      capabilities: manual ? {} : capabilityValues, answer_defaults: manual ? {} : answerDefaults.read(),
+      judge_defaults: manual ? {} : judgeDefaults.read(), health_defaults: manual ? {} : healthDefaults.read() };
+    await (engine ? api.put(`/api/projects/${ctx.project.id}/engines/${engine.id}`, payload) : api.post(`/api/projects/${ctx.project.id}/engines`, payload));
+    modal.close(); toast("引擎配置已保存，密钥未回显"); ctx.refresh();
   });
 }
 
@@ -289,10 +312,9 @@ function userDialog(ctx) {
   const form = h("form", {}, field("邮箱", email), field("初始密码", password, "至少 10 个字符，请通过安全渠道交付并要求尽快更换"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "创建用户")));
   const modal = drawer("新建用户", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api.post("/api/users", { email: email.value, password: password.value }); modal.close(); toast("用户已创建，请继续分配项目角色"); ctx.refresh(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post("/api/users", { email: email.value, password: password.value });
+    modal.close(); toast("用户已创建，请继续分配项目角色"); ctx.refresh();
   });
 }
 
@@ -303,10 +325,9 @@ function membershipDialog(ctx, users) {
     h("p", { class: "muted" }, "reviewer / viewer 不查看内部成本和原始回答；所有审批仍以管理员权限为准。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存项目角色")));
   const modal = drawer("分配项目成员", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api.post(`/api/projects/${ctx.project.id}/memberships`, { user_id: Number(user.value), role: role.value }); modal.close(); toast("成员角色已保存"); ctx.refresh(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post(`/api/projects/${ctx.project.id}/memberships`, { user_id: Number(user.value), role: role.value });
+    modal.close(); toast("成员角色已保存"); ctx.refresh();
   });
 }
 
@@ -351,7 +372,7 @@ function scheduleDialog(ctx, waves, schedule = null) {
   const customDays = input(schedule?.recurrence_days || 14, { type: "number", min: 1, max: 365 });
   const daysField = field("自定义周期（天）", customDays);
   const dateValue = schedule?.next_run_at || schedule?.scheduled_at;
-  const local = dateValue ? new Date(new Date(dateValue).getTime() - new Date(dateValue).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
+  const local = toDateTimeLocal(dateValue, ctx.project.timezone);
   const scheduledAt = input(local, { type: "datetime-local", required: true });
   const sync = () => { daysField.hidden = frequency.value !== "custom"; customDays.required = frequency.value === "custom"; };
   frequency.addEventListener("change", sync); sync();
@@ -359,16 +380,12 @@ function scheduleDialog(ctx, waves, schedule = null) {
     h("p", { class: "muted" }, schedule?.action_id ? "此调度由 Action 实际发布时间锚定。修改周期不会改写发布事件。" : "周期从计划时间推进，停机恢复后不会突发补跑所有过期测量。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, schedule ? "保存调度修改" : "保存调度")));
   const modal = drawer(schedule ? `编辑调度 · ${schedule.wave_label}` : "安排 Wave 复测", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const date = new Date(scheduledAt.value);
-    if (Number.isNaN(date.getTime())) { formError(form, new Error("请选择有效执行时间")); return; }
+  onSubmit(form, async () => {
+    const scheduledAtUtc = fromDateTimeLocal(scheduledAt.value, ctx.project.timezone);
     const recurrence = frequency.value === "custom" ? Number(customDays.value) : frequency.value ? Number(frequency.value) : null;
-    try {
-      if (schedule) await api.put(`/api/projects/${ctx.project.id}/schedules/${schedule.id}`, { scheduled_at: date.toISOString(), recurrence_days: recurrence, status: schedule.status === "blocked" ? "pending" : undefined });
-      else await api.post(`/api/projects/${ctx.project.id}/schedules`, { wave_id: Number(wave.value), scheduled_at: date.toISOString(), recurrence_days: recurrence });
-      modal.close(); toast("复测调度已保存"); ctx.refresh();
-    } catch (error) { formError(form, error); }
+    if (schedule) await api.put(`/api/projects/${ctx.project.id}/schedules/${schedule.id}`, { scheduled_at: scheduledAtUtc, recurrence_days: recurrence, status: schedule.status === "blocked" ? "pending" : undefined });
+    else await api.post(`/api/projects/${ctx.project.id}/schedules`, { wave_id: Number(wave.value), scheduled_at: scheduledAtUtc, recurrence_days: recurrence });
+    modal.close(); toast("复测调度已保存"); ctx.refresh();
   });
 }
 
@@ -400,14 +417,13 @@ function renderOperations(root, ctx, operations) {
 function workLogDialog(ctx) {
   const hours = input("", { type: "number", min: 0.25, max: 24, step: "0.25", required: true });
   const kind = select(["测量执行", "证据复核", "内容交付", "报告审核", "客户沟通"].map((value) => ({ value, label: value })));
-  const workDate = input(new Date().toISOString().slice(0, 10), { type: "date", required: true });
+  const workDate = input(dateInTimezone(ctx.project.timezone), { type: "date", required: true });
   const note = textarea("");
   const form = h("form", {}, h("p", { class: "muted" }, "这是手工交付登记，不是系统自动计时。"), field("业务日期", workDate), field("工时", hours), field("工作类型", kind), field("说明", note), h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存工时")));
   const modal = drawer("记录交付工时", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api.post(`/api/projects/${ctx.project.id}/work-logs`, { hours: Number(hours.value), kind: kind.value, note: note.value, work_date: workDate.value }); modal.close(); toast("工时已记录"); ctx.refresh(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post(`/api/projects/${ctx.project.id}/work-logs`, { hours: Number(hours.value), kind: kind.value, note: note.value, work_date: workDate.value });
+    modal.close(); toast("工时已记录"); ctx.refresh();
   });
 }
 
@@ -418,7 +434,7 @@ function renderGovernance(root, ctx, data) {
   const completeness = input(String(settings.min_pair_completeness ?? 0.9), { type: "number", min: 0.5, max: 1, step: "0.01" });
   const repeats = select([1, 2, 3, 4, 5].map((value) => ({ value, label: `${value} 轮` })), settings.repeats ?? 3);
   const budgetEnabled = checkbox("启用预算检查", budget.enabled ?? false, "软超限需要管理员逐次填写理由；硬限额在执行前拒绝");
-  const hardLimit = checkbox("启用硬限额", budget.hard_limit ?? false, "只提供执行前保护，不承诺在途厂商调用绝不超额");
+  const hardLimit = checkbox("启用硬限额", budget.hard_limit ?? false, "需先开启预算总开关；只提供执行前保护，不承诺在途厂商调用绝不超额");
   const currency = select(["CNY", "USD", "EUR"].map((value) => ({ value, label: value })), budget.currency || "CNY");
   const amount = input(budget.amount ?? "", { type: "number", min: 0, step: "0.01", placeholder: "不设置" });
   const waveAmount = input(budget.wave_amount ?? "", { type: "number", min: 0, step: "0.01", placeholder: "不设置" });
@@ -429,17 +445,21 @@ function renderGovernance(root, ctx, data) {
     h("div", { class: "form-grid" }, field("小样本阈值 n", smallN), field("最低配对完整度", completeness), field("默认采样轮次", repeats), field("预算币种", currency),
       field("项目累计额度", amount), field("单 Wave 额度", waveAmount), field("每日额度", dailyAmount, `按 ${ctx.project.timezone} 的自然日检查`), field("原文保留天数", retentionDays, "留空表示永不自动清理；后台最多每日执行一次")),
     budgetEnabled.node, hardLimit.node, h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit", disabled: ctx.role !== "admin" }, "保存项目设置")));
+  const syncBudget = () => {
+    hardLimit.control.disabled = !budgetEnabled.control.checked || ctx.role !== "admin";
+    hardLimit.node.classList.toggle("control-disabled", hardLimit.control.disabled);
+  };
+  budgetEnabled.control.addEventListener("change", syncBudget);
+  syncBudget();
   if (ctx.role !== "admin") form.querySelectorAll("input,select").forEach((control) => { control.disabled = true; });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  onSubmit(form, async () => {
     const amountValue = (control) => control.value === "" ? null : Number(control.value);
-    try {
-      const result = await api.put(`/api/projects/${ctx.project.id}/settings`, { settings: { small_sample_n: Number(smallN.value), min_pair_completeness: Number(completeness.value), repeats: Number(repeats.value), retention_days: retentionDays.value === "" ? null : Number(retentionDays.value), budget: { ...budget, enabled: budgetEnabled.control.checked, hard_limit: hardLimit.control.checked, currency: currency.value, amount: amountValue(amount), wave_amount: amountValue(waveAmount), daily_amount: amountValue(dailyAmount) } } });
-      ctx.project.settings = result.settings;
-      toast("项目设置已保存，已有 Wave 未改变"); ctx.refresh();
-    } catch (error) { formError(form, error); }
+    const result = await api.put(`/api/projects/${ctx.project.id}/settings`, { settings: { small_sample_n: Number(smallN.value), min_pair_completeness: Number(completeness.value), repeats: Number(repeats.value), retention_days: retentionDays.value === "" ? null : Number(retentionDays.value), budget: { ...budget, enabled: budgetEnabled.control.checked, hard_limit: hardLimit.control.checked, currency: currency.value, amount: amountValue(amount), wave_amount: amountValue(waveAmount), daily_amount: amountValue(dailyAmount) } } });
+    ctx.project.settings = result.settings;
+    toast("项目设置已保存，已有 Wave 未改变"); ctx.refresh();
   });
   root.append(form);
+  renderSourceDomains(root, ctx, settings.source_domains || {});
   if (data.retention) renderRetention(root, ctx, data.retention);
   if (ctx.role === "admin") {
     root.append(section("备份与项目导出", "项目导出不含密钥；数据库恢复仍通过停写后的运维 CLI 执行", h("div", { class: "section-note" },
@@ -450,6 +470,41 @@ function renderGovernance(root, ctx, data) {
     root.append(h("details", { class: "advanced" }, h("summary", {}, "最近审计事件"), h("div", {}, dataTable(["时间", "操作者", "对象", "动作"], data.audit.map((event) => [formatDate(event.created_at, ctx.project.timezone), event.actor_email || "系统", `${event.object_type} #${event.object_id}`, event.action])))));
     root.append(h("details", { class: "advanced" }, h("summary", {}, "危险操作：删除当前项目"), h("div", {}, h("p", { class: "muted" }, "删除前请先完成备份与项目导出。"), h("button", { class: "button danger", onClick: () => deleteProject(ctx) }, "永久删除当前项目"))));
   }
+}
+
+function renderSourceDomains(root, ctx, initial) {
+  const rows = Object.entries(initial).map(([domain, category]) => ({ domain, category }));
+  const categories = ["官网", "百科", "UGC", "新闻", "行业", "研报", "投诉", "其他"];
+  const list = h("div", { class: "source-domain-list" });
+  const draw = () => {
+    clear(list);
+    rows.forEach((row, index) => {
+      const domain = input(row.domain, { required: true, placeholder: "example.com", disabled: ctx.role !== "admin" });
+      const category = select(categories.map((value) => ({ value, label: value })), row.category, { disabled: ctx.role !== "admin" });
+      domain.addEventListener("input", () => { row.domain = domain.value; });
+      category.addEventListener("change", () => { row.category = category.value; });
+      list.append(h("div", { class: "form-grid source-domain-row" }, field("来源域名", domain), field("来源类别", category),
+        h("div", { class: "form-actions" }, ctx.role === "admin" ? h("button", { class: "button small-button secondary", type: "button", onClick: () => { rows.splice(index, 1); draw(); } }, "移除") : null)));
+    });
+    if (!rows.length) list.append(h("p", { class: "muted" }, "尚未配置来源域名；未匹配的来源归为“其他”。"));
+  };
+  draw();
+  const form = h("form", {}, list, h("div", { class: "form-actions" },
+    ctx.role === "admin" ? h("button", { class: "button secondary", type: "button", onClick: () => { rows.push({ domain: "", category: "其他" }); draw(); } }, "添加来源域名") : null,
+    ctx.role === "admin" ? h("button", { class: "button", type: "submit" }, "保存来源分类") : null));
+  onSubmit(form, async () => {
+    const mapping = {};
+    rows.forEach((row) => {
+      const domain = row.domain.trim();
+      if (!domain) throw new Error("来源域名不能为空；不需要的行请移除");
+      if (mapping[domain]) throw new Error(`来源域名重复：${domain}`);
+      mapping[domain] = row.category;
+    });
+    const result = await api.put(`/api/projects/${ctx.project.id}/settings`, { settings: { source_domains: mapping } });
+    ctx.project.settings = result.settings;
+    toast("来源分类已保存；历史 Citation 未改写"); ctx.refresh();
+  });
+  root.append(section("来源分类管理", "只应用于之后写入的 Citation；域名填 hostname，不填 https://、端口或路径。历史来源与旧报告不会静默重分类。", form));
 }
 
 function renderRetention(root, ctx, preview) {
@@ -472,10 +527,9 @@ function deleteProject(ctx) {
     h("p", {}, "不会删除其他客户项目或独立 secret store。请先完成备份与项目导出。")),
     field("输入完整项目名确认", confirmation), h("div", { class: "form-actions" }, h("button", { class: "button danger", type: "submit" }, "永久删除项目")));
   const modal = drawer("删除项目", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (confirmation.value !== ctx.project.name) { formError(form, new Error("项目名不完全一致")); return; }
-    try { await api.delete(`/api/projects/${ctx.project.id}?confirm=${encodeURIComponent(confirmation.value)}`); modal.close(); toast("项目已删除"); localStorage.removeItem("geopulse-project"); location.reload(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    if (confirmation.value !== ctx.project.name) throw new Error("项目名不完全一致");
+    await api.delete(`/api/projects/${ctx.project.id}?confirm=${encodeURIComponent(confirmation.value)}`);
+    modal.close(); toast("项目已删除"); localStorage.removeItem("geopulse-project"); location.reload();
   });
 }

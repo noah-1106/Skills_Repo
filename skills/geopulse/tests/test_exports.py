@@ -20,7 +20,8 @@ def test_api_and_cli_export_service_share_contract_and_recursive_secret_scrub(cl
     wave_id = api(client, "GET", f"/api/projects/{client.project_id}/prompt-sets")["items"][0]["id"]
     wave = api(client, "POST", f"/api/projects/{client.project_id}/waves", json={
         "prompt_set_id": wave_id, "label": "导出快照", "engine_ids": [engine["id"]], "use_judge": False})
-    api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs")
+    api(client, "POST", f"/api/projects/{client.project_id}/waves/{wave['id']}/runs",
+        json={"confirm_judge_disabled": True})
     via_api = api(client, "GET", f"/api/projects/{client.project_id}/export")
     with connect() as conn:
         project = one(conn, "SELECT * FROM projects WHERE id=?", (client.project_id,))

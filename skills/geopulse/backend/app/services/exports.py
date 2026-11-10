@@ -10,7 +10,8 @@ from ..migrations import SCHEMA_VERSION
 from ..security import audit
 
 TABLES = ("clients", "projects", "memberships", "engine_configs", "brand_entities", "prompt_sets", "prompt_items",
-          "waves", "runs", "answers", "call_attempts", "observations", "citations", "opportunities", "actions",
+          "waves", "runs", "answers", "judge_batches", "judge_batch_items", "call_attempts", "observations", "citations", "opportunities", "actions",
+          "content_briefs", "action_assets", "asset_publications", "action_remeasurement_rounds",
           "external_events", "reports", "report_events", "schedules", "alerts", "work_logs", "audit_events",
           "budget_reservations", "retention_runs", "backup_runs", "web_collections", "answer_attachments")
 

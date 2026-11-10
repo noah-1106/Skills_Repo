@@ -23,15 +23,6 @@ def report_public(row: dict, internal: bool = False) -> dict:
     return result
 
 
-def _without_system_prompts(value):
-    if isinstance(value, dict):
-        return {key: _without_system_prompts(item) for key, item in value.items()
-                if key != "system_prompt"}
-    if isinstance(value, list):
-        return [_without_system_prompts(item) for item in value]
-    return value
-
-
 @router.get("")
 def list_reports(project_id: int, request: Request):
     context = project_context(request, project_id)
@@ -58,12 +49,7 @@ def get_report(project_id: int, report_id: int, request: Request):
         snapshot = loads(report["data_snapshot_json"], {})
         snapshot["approval_status"] = report["approval_status"]
         if context["role"] in ("reviewer", "viewer"):
-            snapshot.pop("costs", None)
-            snapshot.pop("internal_samples", None)
-            for wave in snapshot.get("waves", []):
-                wave["protocol"] = _without_system_prompts(wave["protocol"])
-                wave.get("stats", {}).pop("budget", None)
-                wave.pop("collection_evidence", None)
+            snapshot = reporting.customer_snapshot(snapshot)
         result["snapshot"] = snapshot
         result["gates"] = reporting.release_gates(loads(report["data_snapshot_json"], {}))
         return result

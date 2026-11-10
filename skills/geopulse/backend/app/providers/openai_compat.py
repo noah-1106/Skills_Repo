@@ -15,6 +15,7 @@ NEUTRAL_SYSTEM = DEFAULT_SYSTEM_PROMPT
 
 class OpenAICompatProvider(BaseProvider):
     name = "openai_compat"
+    output_token_parameter = "max_tokens"
 
     def __init__(self, base_url: str, api_key: str, model: str, timeout: int = 60,
                  capabilities: dict | None = None):
@@ -62,15 +63,19 @@ class OpenAICompatProvider(BaseProvider):
         messages.append({"role": "user", "content": prompt})
         payload = {"model": self.model, "messages": messages}
         temperature = execution.get("temperature", 0 if json_mode else 0.2)
-        max_tokens = execution.get("max_tokens", 1800 if json_mode else 700)
+        max_tokens = execution.get("max_tokens", 1800 if json_mode else 65536)
         if temperature is not None:
             payload["temperature"] = temperature
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            payload[self.output_token_parameter] = max_tokens
         response_format = bool(json_mode and self.capabilities.get("supports_json_mode") is not False)
         if response_format:
             payload["response_format"] = {"type": "json_object"}
-        request_params = {key: payload[key] for key in ("temperature", "max_tokens") if key in payload}
+        request_params = {}
+        if temperature is not None:
+            request_params["temperature"] = temperature
+        if max_tokens is not None:
+            request_params["max_tokens"] = max_tokens
         request_params.update({"json_mode": json_mode, "response_format": response_format})
         operation = {"kind": "judge" if json_mode else "answer", "status": "succeeded",
                      "model": self.model, "latency_ms": 0, "usage": {}, "request_id": "",

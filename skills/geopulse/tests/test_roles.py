@@ -32,6 +32,9 @@ def test_project_role_api_contracts(client, official_demo, role):
         waves = api(scoped, "GET", f"/api/projects/{client.project_id}/waves")["items"]
         assert ("estimated_cost" in waves[0]["estimate"]) == (role in ("admin", "analyst"))
         assert ("budget" in waves[0]["stats"]) == (role in ("admin", "analyst"))
+        assert ("estimated_cost" in waves[0]["readiness"]["estimate"]) == (role in ("admin", "analyst"))
+        handoff = api(scoped, "GET", f"/api/projects/{client.project_id}/runs/{run_id}/handoff")
+        assert "cost" not in str(handoff).lower() and "secret_ref" not in str(handoff)
         run = api(scoped, "GET", f"/api/projects/{client.project_id}/runs/{run_id}")
         assert "secret_ref" not in str(run) and "cost_rule" not in str(run)
         answer = api(scoped, "GET", f"/api/projects/{client.project_id}/answers/{answer_id}")
@@ -41,7 +44,7 @@ def test_project_role_api_contracts(client, official_demo, role):
         assert ("costs" in report_detail["snapshot"]) == (role in ("admin", "analyst"))
         assert ("internal_samples" in report_detail["snapshot"]) == (role in ("admin", "analyst"))
         assert all("budget" not in wave["stats"] for wave in report_detail["snapshot"]["waves"]) == (role in ("reviewer", "viewer"))
-        assert all("system_prompt" not in str(wave["protocol"]) for wave in report_detail["snapshot"]["waves"]) == (role in ("reviewer", "viewer"))
+        assert all("system_prompt" not in str(wave) for wave in report_detail["snapshot"]["waves"]) == (role in ("reviewer", "viewer"))
         api(scoped, "GET", f"/api/projects/{client.project_id}/operations", expected=200 if role in ("admin", "analyst") else 403)
         api(scoped, "GET", f"/api/projects/{client.project_id}/export", expected=200 if role == "admin" else 403)
         api(scoped, "GET", f"/api/projects/{client.project_id}/retention/preview", expected=200 if role in ("admin", "analyst") else 403)

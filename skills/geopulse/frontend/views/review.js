@@ -1,5 +1,5 @@
 import { api, query, download } from "../api.js";
-import { h, clear, pageHead, section, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, formatDate, label, safeLink, emptyState } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, formatDate, label, safeLink, emptyState, onSubmit } from "../components.js";
 
 const browserPhaseName = (phase) => ({
   queued: "等待本机采集器", session_check: "检查登录会话", preparing: "准备新会话",
@@ -85,12 +85,19 @@ function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
       h("h3", {}, answer.content_retained === 0 ? "原文已按保留策略清理" : answer.status === "failed" ? "没有有效回答原文" : "原文不可见"),
       h("p", {}, answer.content_retained === 0 ? "判定、有效样本事实和聚合指标仍保留；不能再新增依赖原文的 revision，新报告也无法通过原文证据闸门。" : answer.status === "failed" ? `${answer.error_type || "执行失败"}。失败样本不能解释为零提及；请由管理员确认是否重试。` : "当前角色可查看实体证据与状态，但不能读取内部原始回答。")),
     answer.citations.length ? h("div", { class: "inline-panel" }, h("h3", {}, answer.citations.every((citation) => citation.origin === "browser_page") ? "授权浏览器提取的页面引用" : answer.citations.every((citation) => citation.origin === "manual_page") ? "人工记录的页面引用" : "Provider 实际返回的来源"), answer.citations.map((citation) => h("p", {}, safeLink(citation.final_url || citation.raw_url, citation.title || citation.domain), h("span", { class: "cell-sub" }, `${citation.source_type} · ${citation.domain}`)))) : h("p", { class: "muted small" }, collection ? "未记录页面引用；不会把无来源回答判为无效，也不会补造 URL。" : "未暴露可核验来源；不会补造 URL。"));
-  const observations = h("section", { class: "observations-panel" }, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, "实体判定"), h("p", {}, `${latest.size} 个冻结实体 · 原文不会因修订改变`))));
+  const observations = h("section", { class: "observations-panel" }, h("div", { class: "section-head" }, h("div", {}, h("h2", {}, "实体判定"),
+    h("p", {}, latest.size ? `${latest.size} 个冻结实体 · 原文不会因修订改变` : "尚无实体判定 · 原文不会因修订改变"))));
+  if (!latest.size) observations.append(emptyState("还没有实体判定", answer.status === "judging"
+    ? "Judge 尚未写入判定。可稍后刷新，并检查下方调用元数据。"
+    : ["failed", "cancelled"].includes(answer.status) ? "当前回答未形成有效判定；失败或取消不会被解释为零提及。"
+      : "当前回答没有实体判定记录。请检查 Judge 调用状态，不要补造零提及。"));
   latest.forEach((versions) => {
     const current = versions[0];
-    const panel = h("article", { class: `observation ${current.entity_status === "confirmed" ? "confirmed" : current.review_status === "pending" ? "pending" : ""}` },
-      h("div", { class: "observation-head" }, h("div", {}, h("h3", {}, current.name), h("span", { class: "cell-sub" }, `${label(current.role)} · ${label(current.judge_status)}`)), badge(current.entity_status)),
-      h("div", { class: "button-group" }, badge(current.depth), badge(current.sentiment), current.top_choice ? badge("Top Choice", "info") : null, badge(current.review_status)),
+    const panel = h("article", { class: `observation ${current.review_status === "confirmed" ? "confirmed" : current.review_status === "pending" ? "pending" : ""}` },
+      h("div", { class: "observation-head" }, h("div", {}, h("h3", {}, current.name), h("span", { class: "cell-sub" }, `${label(current.role)} · ${label(current.judge_status)}`)),
+        h("span", { class: "badge-context" }, h("span", { class: "quiet-label" }, "实体身份"), badge(current.entity_status))),
+      h("div", { class: "button-group" }, badge(current.depth), badge(current.sentiment), current.top_choice ? badge("Top Choice", "info") : null,
+        h("span", { class: "badge-context" }, h("span", { class: "quiet-label" }, "人工复核"), badge(current.review_status))),
       current.evidence ? h("blockquote", { class: "observation-evidence" }, current.evidence) : h("p", { class: "muted small" }, "无有效证据句"),
       current.citation_urls.length ? h("p", {}, current.citation_urls.map((url) => safeLink(url))) : null,
       h("div", { class: "button-group" },
@@ -100,9 +107,11 @@ function renderAnswerDetail(root, ctx, answer, filters, collection = null) {
   });
   root.append(h("div", { class: "evidence-layout" }, rawPanel, observations));
   root.append(h("details", { class: "advanced" }, h("summary", {}, "调用、模型与 Judge 元数据"), h("div", {},
-    h("p", { class: "muted" }, `返回模型：${answer.model || "—"}。usage：${JSON.stringify(answer.usage || {})}`),
-    answer.call_attempts.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["类型", "状态", "模型", "延迟", "Usage", "实际请求参数", "响应元数据", ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : ["成本"])].map((title) => h("th", {}, title)))),
-      h("tbody", {}, answer.call_attempts.map((attempt) => h("tr", {}, [attempt.kind, label(attempt.status), attempt.model || "—", `${attempt.latency_ms || 0} ms`, JSON.stringify(attempt.usage || {}), JSON.stringify(attempt.request_params || {}), JSON.stringify(attempt.response_meta || {}), ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : [attempt.cost ?? "未知"])].map((value) => h("td", {}, value))))))) : h("p", {}, "暂无调用记录"))));
+    h("p", { class: "muted metadata-value" }, `返回模型：${answer.model || "—"}。usage：${JSON.stringify(answer.usage || {})}`),
+    answer.call_attempts.length ? dataTable(["类型", "状态", "模型", "延迟", "Usage", "实际请求参数", "响应元数据", ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : ["成本"])],
+      answer.call_attempts.map((attempt) => [attempt.kind, label(attempt.status), attempt.model || "—", `${attempt.latency_ms || 0} ms`,
+        h("span", { class: "metadata-value" }, JSON.stringify(attempt.usage || {})), h("span", { class: "metadata-value" }, JSON.stringify(attempt.request_params || {})),
+        h("span", { class: "metadata-value" }, JSON.stringify(attempt.response_meta || {})), ...(ctx.role === "reviewer" || ctx.role === "viewer" ? [] : [attempt.cost ?? "未知"])])) : h("p", {}, "暂无调用记录"))));
 }
 
 function evidenceList(ctx, collection, onDelete = null) {
@@ -123,7 +132,7 @@ function collectionFacts(ctx, collection) {
     h("dl", { class: "definition-list" },
       browser ? h("div", {}, h("dt", {}, "平台 Driver"), h("dd", {}, `${collection.browser_driver === "kimi_web" ? "Kimi Web" : "DeepSeek Web"} · ${collection.browser_driver_version || "版本未记录"}`)) : null,
       h("div", {}, h("dt", {}, "实际页面"), h("dd", {}, collection.actual_url || collection.conversation_url ? safeLink(collection.actual_url || collection.conversation_url) : "—")),
-      h("div", {}, h("dt", {}, "观察时间"), h("dd", {}, collection.observed_at ? `${collection.observed_at} · ${collection.timezone}` : "—")),
+      h("div", {}, h("dt", {}, "观察时间"), h("dd", {}, collection.observed_at ? `${formatDate(collection.observed_at, collection.timezone || ctx.project.timezone)} · ${collection.timezone}` : "—")),
       h("div", {}, h("dt", {}, "页面 / 会话"), h("dd", {}, `${actual.surface || "—"} · ${collection.observed_mode || "—"} · ${actual.session_mode === "new" ? "新会话" : actual.session_mode || "—"}`)),
       h("div", {}, h("dt", {}, "检索状态"), h("dd", {}, collection.retrieval_status || "unknown")),
       h("div", {}, h("dt", {}, "提交时间"), h("dd", {}, formatDate(collection.submitted_at, ctx.project.timezone))),
@@ -257,15 +266,31 @@ function collectionWorkspace(ctx, answer, collection) {
     const selected = file.files?.[0];
     if (!selected) { formError(form, new Error("请先选择一份证据文件")); return; }
     if (!selected.size || selected.size > 10 * 1024 * 1024) { formError(form, new Error("证据文件必须非空且不超过 10MB")); return; }
+    if (form.getAttribute("aria-busy") === "true") return;
     button.disabled = true;
+    form.setAttribute("aria-busy", "true");
     try {
       await saveDraft(false);
+    } catch (error) {
+      formError(form, new Error(`草稿保存失败，尚未上传证据：${error.message}`));
+      button.disabled = false;
+      form.setAttribute("aria-busy", "false");
+      return;
+    }
+    try {
       const extension = selected.name.split(".").pop()?.toLowerCase();
       const mediaType = attachmentKind.value === "raw_html" ? "text/html" : attachmentKind.value === "raw_text" ? "text/plain" : selected.type || ({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[extension] || "");
       const digest = await evidenceSha256(selected);
       await api.upload(`/api/projects/${ctx.project.id}/answers/${answer.id}/attachments${query({ kind: attachmentKind.value, filename: selected.name, media_type: mediaType })}`, selected, digest);
       toast("草稿与证据已保存"); ctx.refresh();
-    } catch (error) { formError(form, new Error(`当前草稿已保存；证据上传未完成：${error.message}`)); button.disabled = false; }
+    } catch (error) {
+      formError(form, new Error(`当前草稿已保存；证据上传未完成：${error.message}`));
+    } finally {
+      if (form.isConnected) {
+        button.disabled = false;
+        form.setAttribute("aria-busy", "false");
+      }
+    }
   };
   const deleteEvidence = (attachment) => confirmDialog("删除草稿证据", `将删除 ${attachment.filename}。当前表单会先保存为草稿；正式提交后不能删除证据。`, "删除附件", async () => {
     await saveDraft(false);
@@ -313,10 +338,7 @@ function collectionWorkspace(ctx, answer, collection) {
           toast("已登记采集失败；未计入有效样本"); ctx.refresh();
         }, true);
       } }, "保存草稿并登记失败"))));
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await saveDraft(); } catch (error) { formError(form, error); }
-  });
+  onSubmit(form, async () => { await saveDraft(); });
   return form;
 }
 
@@ -335,15 +357,12 @@ function revisionDialog(ctx, answer, observation, filters) {
     mentioned.node, topChoice.node, field("原文证据", evidence), field("修订理由", reason), arbitrate.node,
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存新 Revision")));
   const modal = drawer("人工修订实体判定", form, { wide: true });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await api.post(`/api/projects/${ctx.project.id}/answers/${answer.id}/observations/${observation.id}/revisions`, {
-        entity_status: entityStatus.value, mentioned: mentioned.control.checked, depth: depth.value, sentiment: sentiment.value,
-        top_choice: topChoice.control.checked, evidence: evidence.value, reason: reason.value,
-        arbitrate: ctx.role === "admin" && arbitrate.control.checked,
-      });
-      modal.close(); toast("新 revision 已保存，原始回答未改变"); ctx.refresh();
-    } catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post(`/api/projects/${ctx.project.id}/answers/${answer.id}/observations/${observation.id}/revisions`, {
+      entity_status: entityStatus.value, mentioned: mentioned.control.checked, depth: depth.value, sentiment: sentiment.value,
+      top_choice: topChoice.control.checked, evidence: evidence.value, reason: reason.value,
+      arbitrate: ctx.role === "admin" && arbitrate.control.checked,
+    });
+    modal.close(); toast("新 revision 已保存，原始回答未改变"); ctx.refresh();
   });
 }

@@ -41,7 +41,7 @@ def test_schedule_budget_block_is_actionable_and_alert_ack_is_audited(client):
     prompt_set_id = api(client, "GET", f"/api/projects/{client.project_id}/prompt-sets")["items"][0]["id"]
     wave = api(client, "POST", f"/api/projects/{client.project_id}/waves", json={
         "prompt_set_id": prompt_set_id, "label": "调度预算 Wave", "engine_ids": [engine["id"]],
-        "repeats": 1, "use_judge": False,
+        "repeats": 1, "use_judge": True,
     })
     api(client, "PUT", f"/api/projects/{client.project_id}/settings", json={"settings": {"budget": {
         "enabled": True, "hard_limit": True, "amount": 0, "currency": "CNY"}}})

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .api import admin, auth, collections, entities, projects, prompts, reports, waves, workflow
+from .api import admin, auth, collections, entities, judging, projects, prompts, reports, waves, workflow
 from .migrations import SCHEMA_VERSION, current_version
 from .services.browser_worker import BrowserWorker
 from .services.measurement import Worker
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="GeoPulse", version="2.3.0",
+    app = FastAPI(title="GeoPulse", version="2.5.0",
                   description="可复现、可对比、可审计的 GEO 客户交付系统", lifespan=lifespan)
 
     @app.middleware("http")
@@ -68,13 +68,13 @@ def create_app() -> FastAPI:
                                ensure_ascii=False))
         return response
 
-    for router in (auth.router, projects.router, prompts.router, entities.router, waves.router,
+    for router in (auth.router, projects.router, prompts.router, entities.router, waves.router, judging.router,
                    workflow.router, reports.router, admin.router, collections.router):
         app.include_router(router)
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "2.3.0", "schema_version": current_version(),
+        return {"status": "ok", "version": "2.5.0", "schema_version": current_version(),
                 "expected_schema": SCHEMA_VERSION, "worker": os.environ.get("GEOPULSE_DISABLE_WORKER") != "1",
                 "browser_worker": (os.environ.get("GEOPULSE_DISABLE_WORKER") != "1"
                                    and os.environ.get("GEOPULSE_DISABLE_BROWSER_WORKER") != "1")}

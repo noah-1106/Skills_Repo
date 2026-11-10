@@ -167,7 +167,8 @@ def estimate_wave(conn, wave: dict) -> dict:
 
 
 def record_attempt(conn, *, project: dict, engine: dict, operation: dict,
-                   answer: dict | None = None, group: str | None = None) -> int:
+                   answer: dict | None = None, group: str | None = None,
+                   judge_batch_id: int | None = None) -> int:
     billing_operation = operation.get("operation") or operation["kind"]
     kind = group or operation["kind"]
     rule = rule_for(engine)
@@ -188,8 +189,8 @@ def record_attempt(conn, *, project: dict, engine: dict, operation: dict,
     cursor = conn.execute(
         """INSERT OR IGNORE INTO call_attempts(
             answer_id,client_id,project_id,run_id,engine_config_id,kind,operation,attempt_no,status,
-            request_id,model,latency_ms,usage_json,request_params_json,response_meta_json,cost,currency,cost_rule_json,error_type,error_detail,created_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            request_id,model,latency_ms,usage_json,request_params_json,response_meta_json,cost,currency,cost_rule_json,error_type,error_detail,created_at,judge_batch_id
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (
             answer_id,
             (answer or project)["client_id"], (answer or project)["project_id"] if answer else project["id"],
@@ -198,7 +199,7 @@ def record_attempt(conn, *, project: dict, engine: dict, operation: dict,
             operation.get("latency_ms"), dumps(usage), dumps(operation.get("request_params") or {}),
             dumps(operation.get("response_meta") or {}), cost, currency, dumps(rule),
             operation.get("error_type"), str(operation.get("error_detail") or "")[:1000] or None,
-            operation.get("created_at") or utc_now(),
+            operation.get("created_at") or utc_now(), judge_batch_id,
         ),
     )
     return int(cursor.lastrowid)

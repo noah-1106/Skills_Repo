@@ -1,11 +1,11 @@
 ---
 name: geopulse
-description: 自托管的多客户 GEO 交付工作台。冻结问题与实体口径，执行可恢复的 Wave/Run 测量，复核不可变原始证据，完成同口径比较、机会与七步 Action、客户/内部报告审批，以及角色、调度、成本和备份管理。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 与授权 DeepSeek/Kimi 网页采集。
+description: 自托管的多客户 GEO 交付工作台。冻结问题与实体口径，通过跑前准备单执行可恢复的 Wave/Run 测量，以 Judge-only 补判和人工 revision 复核不可变证据，完成 Opportunity→Intervention cohort→Brief/Asset/Publication→D7/D14/D28→客户决策报告，并用只读 handoff 交接唯一下一步。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 与授权 DeepSeek/Kimi 网页采集。
 ---
 
 # GeoPulse v2 — 多客户 GEO 交付工作台
 
-> **主开发仓库：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）。** 本目录是 Skills_Repo 的 v2.3 分发快照；新功能、Issue、CI 和 Release 以独立仓库为准。
+> **主开发仓库：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）。** 本目录是 Skills_Repo 的 v2.5 分发镜像；新功能、Issue、CI 和 Release 以独立仓库为准。
 
 ## 何时使用
 
@@ -49,11 +49,11 @@ export GEOPULSE_BROWSER_PROFILES="$HOME/.geopulse/v2/browser_profiles"
 1. **项目总览**：当前阶段、待办、正式指标、告警和下一次复测。
 2. **问题集**：草稿、候选 scaffold、JSON/CSV、去重、审核、冻结、复制和版本 diff。
 3. **品牌实体**：实体卡、别名冲突、管理员消歧、不可变版本和竞品池。
-4. **测量执行**：Wave 冻结协议，Run 执行/重试，调用与成本预估，持久队列和正式 Run 指定。
-5. **证据复核**：原文与 observation、Judge 元数据、引用和追加式人工 revision。
-6. **机会与行动**：管理员确认适用性、冻结权重评分、七步 Action、真实发布和复测。
-7. **对比与报告**：协议与有效样本完整度、配对迁移、ECharts、不可变快照、三级审批、HTML/PDF。
-8. **系统管理**：引擎、成员角色、单次/周期调度、告警确认与恢复、成本、手工工时、软/硬预算、原文保留、审计、备份、导出和删除。
+4. **测量执行**：跑前准备单核对 Judge、有效参数、调用/费用、历史健康、耗时和截断风险；Wave 冻结协议，Run 执行/重试，持久队列和正式 Run 指定。
+5. **证据复核**：原文与 observation、Judge 元数据、引用和追加式人工 revision；Judge-only 补判只追加判定，不重新请求 answer/search。
+6. **机会与 Intervention**：管理员确认适用性、冻结权重评分、七步 Action cohort、版本化 Brief/Asset、独立多渠道 Publication 和 D7/D14/D28 复测。
+7. **对比与报告**：有效 Judge lineage、协议与样本完整度、配对迁移、ECharts、不可变快照、实际模型与指标分母附录、三问客户决策摘要与唯一下一轮建议、三级审批、HTML/PDF。
+8. **系统管理**：引擎、来源分类、成员角色、单次/周期调度、告警确认与恢复、成本、手工工时、软/硬预算、原文保留、审计、备份、导出和删除。
 
 逐项“界面 → API → 持久化 → 执行器 → 权限 → 测试”见 `docs/feature-matrix.md`。
 
@@ -78,7 +78,9 @@ DeepSeek Search+Chat、Kimi Search+Chat 和 DeepSeek 独立 Judge 已完成隔�
 
 - Wave 是业务测量，Run 是其下的一次尝试；正式 Run 只能由管理员指定。
 - 失败、取消、空、截断或结果不明回答不能成为“零提及”。
-- 原始回答不可变；人工复核和 Judge 升级只追加 observation revision。
+- 原始回答不可变；人工复核和 Judge-only 补判只追加 observation revision，不重新请求回答或检索。
+- 真实 Provider 关闭 Judge 时，创建 Run 必须由 admin 显式确认并审计；fallback 推荐、pending/provisional、混合补判覆盖或活跃补判会阻断相应报告审批与严格比较。
+- 只读 handoff 提供质量摘要、稳定业务 ID、报告/机会/工时状态和唯一下一步；不自动写外部业务孪生、外发报告或登记工时。
 - 只有 confirmed 实体进入有效提及、推荐和 SoV。
 - 默认 Wilson 95%、小样本阈值 `n=30`、最低配对完整度 `90%`、3 轮采样（可配置 1–5）；Wave 冻结后不能看结果放宽。
 - 实体审核、机会适用性、正式 Run、报告审批/发送登记和项目删除仅管理员可执行。
@@ -86,6 +88,11 @@ DeepSeek Search+Chat、Kimi Search+Chat 和 DeepSeek 独立 Judge 已完成隔�
 - 报告发送只是人工登记，不自动向外部服务发送。
 - 原文默认不自动清理；显式配置保留天数后，只清理到期正文并保留有效样本、判定、usage 和聚合元数据。
 - Action 改善/未改善结论要求另一轮 Wave 的正式 Run 和严格同口径比较，来源基线不能作为自己的复测目标。
+- Action 就是 Intervention cohort；同期多资产只按 cohort 观察，不输出单资产 delta，不自动推断策略因果。
+- Brief 事实主张必须链接该 Opportunity 的基线 Answer/Observation/Citation refs，否则显式 `pending` 并阻止审批；已审批 Brief/Asset 通过新版本变更，Publication 不可变。
+- D7/D14/D28 创建时固定 baseline official Run，评估时固定 target official Run 并保存完整 comparison/hash/refs；小样本/完整度不足为 `insufficient_evidence`，协议不匹配为 `incomparable`。
+- Provider 复测调度只创建 Run；Consumer Web 到期只提醒，不自动创建 Run、指定正式 Run、评估或操作网页。
+- 报告客户版与 reviewer/viewer 不含内部成本、原始回答、内部 evidence refs、Opportunity 原始 evidence JSON 或其他项目。
 
 公式见 `docs/metrics.md`，架构见 `docs/v2-architecture.md`。
 
@@ -125,10 +132,12 @@ done
 .venv/bin/python tests/browser_manual_web.py
 .venv/bin/python tests/browser_model_execution.py
 .venv/bin/python tests/browser_web_collector.py
+.venv/bin/python tests/browser_interventions.py
+.venv/bin/python tests/browser_delivery_quality.py
 ```
 
 浏览器与压力脚本使用临时数据库和动态端口，不读取真实旧配置，不终止未知服务进程，不调用真实付费 Provider。离线黄金集只是小型回归集，不代表生产 LLM Judge 准确率；2700 次压力调用全部来自 DemoProvider。
 
 ## 版本
 
-v2.3.0 · 2026-11-08 · 新增 DeepSeek Search、模型执行参数、独立 Judge、人工 Consumer Web，以及 DeepSeek Web/Kimi Web 授权浏览器离线闭环；真实网页平台仍待逐平台 live 校准。
+v2.5.0 · 2026-11-10 · schema v7。新增跑前测量准备单、Judge-only 补判、effective Judge lineage、交付质量与只读 handoff、实际模型和指标分母附录、来源分类管理；保留 v2.4 的 Intervention 证据链，不作单资产或确定性因果归因。真实付费调用仍需逐次预估与确认，DeepSeek Web/Kimi Web 真实平台仍待逐平台 live 校准。

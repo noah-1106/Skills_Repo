@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>GeoPulse · {{ snapshot.project.name }} · GEO 报告</title>
+<style>
+@page{size:A4;margin:14mm 12mm}*{box-sizing:border-box}body{margin:0;color:#17231f;background:#fff;font:13px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:900px;margin:auto}header{border-bottom:3px solid #146c60;padding:24px 0 18px;margin-bottom:22px}h1{font-size:26px;line-height:1.35;margin:0 0 8px}h2{font-size:18px;margin:30px 0 10px;border-left:4px solid #146c60;padding-left:10px;break-after:avoid}h3{font-size:14px;margin:20px 0 8px}p{margin:6px 0}.muted{color:#5e6b65}.warning{background:#fff7e6;border-left:4px solid #b87516;padding:12px 14px;margin:14px 0}.draft{font-weight:700;color:#a43d3d}.protocol{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.protocol span{border:1px solid #b9c8c1;padding:2px 7px;border-radius:3px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.metric{border-top:2px solid #146c60;background:#f3f7f5;padding:10px}.metric b{display:block;font-size:22px}.metric small{display:block;color:#5e6b65}table{width:100%;border-collapse:collapse;margin:10px 0 18px;break-inside:auto}tr{break-inside:avoid}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d9e1dc;padding:8px}th{color:#46564f;background:#f3f7f5}.evidence{background:#f5f7f6;padding:10px 12px;margin:8px 0;white-space:pre-wrap;word-break:break-word}.cost{font-variant-numeric:tabular-nums}.footer{margin-top:34px;padding-top:12px;border-top:1px solid #cad4ce;color:#5e6b65;font-size:11px}@media(max-width:600px){.metrics{grid-template-columns:1fr 1fr}table{font-size:11px}}@media print{header{margin-top:0}.no-print{display:none}}
+</style>
+</head>
+<body>{% set dimension_labels={'brand':'品牌词','scene':'场景词','compare':'对比词','choice':'选购词'} %}{% set metric_labels={'coverage':'覆盖率','hit_rate':'稳定命中率','recommendation_coverage':'推荐覆盖率','effective_recommendation_rate':'有效推荐率','north_star':'北极星指标'} %}{% set mode_labels={'memory':'模型 API 记忆态','search':'Provider API 检索态'} %}{% set eligibility_labels={'client_confirmed':'客户已确认适用','eligible':'内部确认适用','not_eligible':'不适用'} %}{% set role_labels={'primary':'主品牌','competitor':'竞品','unattributed':'未关联实体'} %}{% set observation_labels={'confirmed':'已确认','wrong_entity':'非目标实体','ambiguous':'实体歧义','mentioned':'仅提及','described':'有描述','recommended':'有推荐','positive':'正向','neutral':'中性','negative':'负向','pending':'待复核','machine':'机器判定','human-arbitrated':'管理员仲裁','human-review':'人工修订'} %}<main>
+<header>
+  <h1>{{ snapshot.project.name }} · GEO {{ '效果对比' if snapshot.comparison else '引用现状诊断' }}报告</h1>
+  <div class="muted">{{ snapshot.project.category }} · {{ snapshot.project.market }} · {{ snapshot.project.timezone }} · 快照 {{ snapshot.generated_at }}</div>
+  {% if not internal %}<div class="muted">客户版 · 仅陈述已审核数据与证据</div>{% else %}<div class="muted">内部版 · 含原始回答、判定质量与成本</div>{% endif %}
+  {% if snapshot.approval_status and snapshot.approval_status not in ['client_approved','sent'] %}<div class="draft">草稿 · 尚未完成客户审批</div>{% endif %}
+</header>
+
+<section>
+<h2>执行摘要</h2>
+<p>{{ snapshot.diagnosis }}</p>
+<p class="warning">{{ snapshot.causal_boundary }}</p>
+</section>
+
+<section>
+{% set round_status_labels={'pending_measurement':'待测量','measured':'已有测量','insufficient_evidence':'证据不足','incomparable':'不可比','legacy_unavailable':'历史证据不可用'} %}{% set change_labels={'improved':'观察到改善','not_improved':'未观察到改善','unknown':'暂无法判断'} %}{% set channel_labels={'owned_site':'客户官网','owned':'自有渠道','partner':'合作渠道','paid':'付费渠道','earned':'自然获得','legacy':'历史记录','unknown':'未知'} %}
+<h2>客户决策摘要</h2>
+<h3>1. 哪些关键问题不推荐我们</h3>
+{% if snapshot.decision_summary.key_questions %}<ul>{% for row in snapshot.decision_summary.key_questions %}<li>{{ row.prompt_text }} · {{ row.gap_type }}</li>{% endfor %}</ul>{% else %}<p>当前快照没有关联的已确认 Intervention。</p>{% endif %}
+<h3>2. 改了什么、发到哪里</h3>
+{% for item in snapshot.decision_summary.changes %}<p><strong>{{ item.title }}</strong></p><ul>{% for asset in item.assets %}<li>{{ asset.title }} · 内容版本 v{{ asset.version }}</li>{% endfor %}{% for publication in item.publications %}<li>{{ channel_labels.get(publication.channel,publication.channel) }}{% if publication.outlet %} / {{ publication.outlet }}{% endif %} · {{ publication.published_at }} · {{ publication.url }}</li>{% endfor %}</ul>{% else %}<p>尚未登记内容资产或真实渠道发布。</p>{% endfor %}
+<h3>3. 之后观察到什么、证据强度如何</h3>
+{% for item in snapshot.decision_summary.observations %}{% for round in item.rounds %}<p>{{ item.title }} · D{{ round.offset_days }}：{{ round.evidence_strength }}；观察状态 {{ round_status_labels.get(round.status,round.status) }} / {{ change_labels.get(round.observed_change,round.observed_change) }}；归因状态 暂无法归因。</p>{% endfor %}{% else %}<p>尚无已冻结的 cohort 复测评估。</p>{% endfor %}
+<p><strong>唯一下一轮建议：{{ snapshot.decision_summary.next_recommendation }}</strong></p>
+<p class="warning">{{ snapshot.decision_summary.causal_boundary }}</p>
+</section>
+
+{% if snapshot.interventions %}<section><h2>Brief 主张证据状态</h2>{% for item in snapshot.interventions %}<h3>{{ item.action.title }}</h3><ul>{% for brief in item.briefs %}{% for claim in brief.claims %}<li>{{ claim.text }} — {% if claim.status == 'pending' %}待确认{% else %}已链接 {{ claim.evidence_count }} 条证据引用{% endif %}</li>{% endfor %}{% endfor %}</ul>{% endfor %}<p class="muted">Citation URL 只证明来源出现，不自动证明页面正文支持主张。</p></section>{% endif %}
+
+{% for wave in snapshot.waves %}
+<section>
+<h2>{{ wave.wave.label }} · 测量口径</h2>
+<div class="protocol">
+  <span>{% if wave.run %}正式 Run {{ wave.run.id }}{% else %}尚未指定正式 Run{% endif %}</span><span>{% if wave.protocol.measurement_target == 'consumer_web' %}{{ '授权浏览器 Consumer Web' if wave.protocol.collection_protocol and wave.protocol.collection_protocol.collection_method == 'browser_assisted' else '人工 Consumer Web' }} · {{ '声明联网' if wave.protocol.mode == 'search' else '声明未联网' }}{% else %}{{ mode_labels.get(wave.protocol.mode,wave.protocol.mode) }}{% endif %}</span><span>{{ '模型提供方 API' if wave.protocol.measurement_target == 'provider_api' else ('授权浏览器网页观察' if wave.protocol.collection_protocol and wave.protocol.collection_protocol.collection_method == 'browser_assisted' else '人工辅助网页观察') }}</span>
+  <span>{{ wave.protocol.repeats }} 轮</span><span>Judge {{ wave.protocol.judge_version }}</span><span>问题集 {{ wave.protocol.prompt_set_hash[:10] }}</span>
+  <span>实体版本 {{ wave.protocol.entity_version[:10] }}</span>
+</div>
+<p class="muted">{% for engine in wave.protocol.engine_signature %}{{ engine.name }} / {{ engine.model }}{{ '；' if not loop.last }}{% endfor %}</p>
+{% if wave.quality %}
+{% if wave.quality.provisional_recommendations %}<p class="warning">{{ wave.quality.provisional_recommendations }} 条推荐判定仍为 provisional，必须完成人工 revision 后才能形成客户推荐结论。</p>{% endif %}
+<p><strong>判定质量：</strong>{{ wave.quality.delivery_readiness }} · 有效样本 {{ wave.quality.valid_samples }}/{{ wave.quality.expected_samples }} · 待复核回答 {{ wave.quality.pending_review_answers }} · 规则 fallback {{ wave.quality.rules_fallback_answers }} · 证据 fallback {{ wave.quality.evidence_fallback_answers }} · 人工 revision {{ wave.quality.human_revisions }}</p>
+{% if wave.quality.judge_batches %}<p>JudgeBatch：{% for batch in wave.quality.judge_batches %}#{{ batch.id }}（{{ batch.status }}，覆盖 {{ batch.done }}/{{ batch.total }}，{{ batch.judge_engine.name }} / 配置 {{ batch.judge_engine.model }}）{{ '；' if not loop.last }}{% endfor %}</p>{% endif %}
+<h3>配置模型与实际返回模型</h3>
+<table><thead><tr><th>角色</th><th>配置模型</th><th>实际返回模型</th><th>说明</th></tr></thead><tbody>
+{% for row in wave.quality.models.answers %}<tr><td>回答 · {{ row.name }}</td><td>{{ row.configured_model }}</td><td>{{ row.actual_models|join('、') or '未返回' }}</td><td>{% if row.provider_routing_observed %}观察到厂商路由差异，不据此判失败{% else %}一致或未观察到差异{% endif %}</td></tr>{% endfor %}
+{% for row in wave.quality.models.judges %}<tr><td>Judge · {{ row.name }}{% if row.judge_batch_id %} · Batch #{{ row.judge_batch_id }}{% endif %}</td><td>{{ row.configured_model }}</td><td>{{ row.actual_models|join('、') or '未返回' }}</td><td>{% if row.provider_routing_observed %}观察到厂商路由差异，不据此判失败{% else %}一致或未观察到差异{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+{% if wave.protocol.measurement_target == 'consumer_web' and wave.protocol.collection_protocol %}{% set collection=wave.protocol.collection_protocol %}{% set automated=collection.collection_method|default('manual') == 'browser_assisted' %}<p>{{ '授权浏览器采集入口' if automated else '人工采集入口' }}：{{ collection.product_url }} · {{ collection.surface }} · {{ '新会话' if collection.session_mode == 'new' else '连续会话' }} · {{ collection.language }}</p><p class="muted">{{ '由本机授权浏览器执行冻结问题并提取当前回答、截图和页面引用；不是 Provider API。' if automated else '由人工在页面中观察并提交，不是 Provider API 或授权浏览器自动 Collector。' }}独立 Judge：{{ wave.protocol.judge_signature.name if wave.protocol.judge_signature else '未启用' }}。</p>{% if wave.metrics.quality.evidence_coverage %}<p>有效样本证据覆盖：{{ wave.metrics.quality.evidence_coverage.hits }}/{{ wave.metrics.quality.evidence_coverage.n }}；Consumer Web 页面引用仅记录页面实际展示的 URL，未自动核验正文支持关系。</p>{% endif %}{% endif %}
+<div class="metrics">
+  {% for key,label in [('coverage','覆盖率'),('hit_rate','稳定命中率'),('effective_recommendation_rate','有效推荐率'),('north_star','有效推荐覆盖（北极星）'),('negative_risk_rate','负面风险率')] %}
+  {% set metric=wave.metrics[key] %}<div class="metric"><span>{{ label }}</span><b>{% if metric.limited %}{{ metric.hits }}/{{ metric.n }}{% else %}{{ metric.value }}%{% endif %}</b><small>{% if metric.limited %}原始计数 · 小样本仅看方向{% else %}{{ metric.hits }}/{{ metric.n }}{% endif %} · Wilson {{ metric.ci_low }}–{{ metric.ci_high }}%</small></div>
+  {% endfor %}
+  <div class="metric"><span>声量份额 SoV</span><b>{% if wave.metrics.hit_rate.limited %}{{ wave.metrics.hit_rate.n }} 条{% else %}{{ wave.metrics.share_of_voice.value }}%{% endif %}</b><small>{{ wave.metrics.share_of_voice.n }} 条有效回答 · 每回答归一{% if wave.metrics.hit_rate.limited %} · 小样本不显示份额{% endif %}</small></div>
+</div>
+<p class="warning">{{ wave.metrics.limitations|join('；') or '未发现自动口径警告；仍需人工审核。' }}</p>
+<h3>四维表现</h3>
+<table><thead><tr><th>维度</th><th>覆盖率</th><th>原始计数</th><th>有效回答</th></tr></thead><tbody>
+{% for row in wave.metrics.dimensions %}<tr><td>{{ dimension_labels.get(row.key,row.key) }}</td><td>{% if row.coverage.limited %}仅看方向{% else %}{{ row.coverage.value }}%{% endif %}</td><td>{{ row.coverage.hits }}/{{ row.coverage.n }}</td><td>{{ row.samples }}</td></tr>{% endfor %}
+</tbody></table>
+<h3>竞品池内表现</h3>
+<table><thead><tr><th>品牌</th><th>确认提及</th><th>SoV</th><th>负面</th><th>证据示例</th></tr></thead><tbody>
+{% for row in wave.metrics.competitors %}<tr><td>{{ row.name }}</td><td>{{ row.mentions }}</td><td>{% if wave.metrics.hit_rate.limited %}—{% else %}{{ row.sov }}%{% endif %}</td><td>{{ row.negative }}</td><td>{{ row.evidence[0] if row.evidence else '—' }}</td></tr>{% endfor %}
+</tbody></table>
+{% if wave.protocol.mode == 'memory' %}<p class="muted">{% if wave.protocol.measurement_target == 'consumer_web' %}本 wave 声明未联网；仅整理 Consumer Web 页面实际展示的引用，不把引用描述为 Provider 返回。{% else %}本 wave 为模型 API 记忆态，未暴露可核验 URL，不计算来源引用率。{% endif %}</p>{% elif wave.metrics.citation_rate %}<p>来源引用率：{{ wave.metrics.citation_rate.hits }}/{{ wave.metrics.citation_rate.n }}（{{ wave.metrics.citation_rate.value }}%）。</p>{% endif %}
+{% if loop.last and snapshot.source_structure %}<h3>来源结构</h3><table><thead><tr><th>来源类型</th><th>域名</th><th>关联实体</th><th>引用 / 去重来源</th></tr></thead><tbody>{% for row in snapshot.source_structure %}<tr><td>{{ row.source_type }}</td><td>{{ row.domain }}</td><td>{{ role_labels.get(row.entity_role,row.entity_role) }}</td><td>{{ row.citations }} / {{ row.unique_sources }}</td></tr>{% endfor %}</tbody></table>{% endif %}
+</section>
+{% endfor %}
+
+{% if snapshot.comparison %}
+<section><h2>效果对比</h2>
+{% if snapshot.comparison.comparable %}
+<p>配对完整度 {{ snapshot.comparison.pair_completeness }}%。{% if snapshot.comparison.exploratory %}模型返回版本变化，以下为探索性比较。{% endif %}</p>
+<table><thead><tr><th>指标</th><th>基线</th><th>复测</th><th>变化（pp）</th></tr></thead><tbody>
+{% for key,row in snapshot.comparison.delta.items() %}<tr><td>{{ metric_labels.get(key,key) }}</td><td>{% if row.baseline.limited %}{{ row.baseline.hits }}/{{ row.baseline.n }}{% else %}{{ row.baseline.value }}%{% endif %}</td><td>{% if row.current.limited %}{{ row.current.hits }}/{{ row.current.n }}{% else %}{{ row.current.value }}%{% endif %}</td><td>{% if row.baseline.limited or row.current.limited %}仅观察方向{% else %}{{ row.pp }}{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+<p>持续提及 {{ snapshot.comparison.transition_counts['持续提及'] }} · 持续缺席 {{ snapshot.comparison.transition_counts['持续缺席'] }} · 新增提及 {{ snapshot.comparison.transition_counts['新增提及'] }} · 失去提及 {{ snapshot.comparison.transition_counts['失去提及'] }}</p>
+<table><thead><tr><th>意图</th><th>引擎</th><th>迁移</th></tr></thead><tbody>{% for row in snapshot.comparison.transitions %}<tr><td>{{ row.prompt_text }}</td><td>{{ row.engine_config_id }}</td><td>{{ row.change }}</td></tr>{% endfor %}</tbody></table>
+{% else %}<p class="warning">{{ snapshot.comparison.reason }}</p>{% endif %}
+</section>{% endif %}
+
+{% for wave in snapshot.waves %}
+<section><h2>{{ wave.wave.label }} · 指标公式与分母附录</h2>
+<p class="muted">定义版本 {{ wave.metric_appendix.version }}。{{ wave.metric_appendix.confidence }}</p>
+<table><thead><tr><th>指标</th><th>公式</th><th>本次分子 / 分母</th><th>聚合与权重</th></tr></thead><tbody>
+{% for row in wave.metric_appendix['items'] %}<tr><td>{{ row.label }}</td><td>{{ row.formula }}</td><td>{% if row.observed.hits is defined %}{{ row.observed.hits }} / {{ row.observed.n }} · {{ row.observed.value }}%{% else %}{{ row.observed.value }}% · n={{ row.observed.n }}{% endif %}</td><td>{{ row.aggregation }}；{{ row.weighting }}</td></tr>{% endfor %}
+</tbody></table>
+<p class="warning">{{ wave.metric_appendix.limitations|join('；') or '小样本与待复核限制仍按质量摘要解释；公式可复算不代表 GEO 因果归因。' }}</p>
+</section>
+{% endfor %}
+
+<section><h2>已确认机会与七步行动</h2>
+{% if snapshot.opportunities %}<table><thead><tr><th>问题</th><th>缺口</th><th>适用性</th><th>评分</th><th>证据</th></tr></thead><tbody>
+{% for row in snapshot.opportunities %}<tr><td>{{ row.prompt_text }}</td><td>{{ row.gap_type }}</td><td>{{ eligibility_labels.get(row.eligibility,row.eligibility) }}</td><td>{{ row.score }}</td><td>{% if internal %}{{ row.evidence.evidence[0].evidence if row.evidence.evidence else '见原始回答' }}{% else %}{{ row.evidence.evidence_count }} 条基线证据引用{% endif %}</td></tr>{% endfor %}</tbody></table>{% else %}<p>暂无经管理员确认的机会。候选缺口不会自动进入客户报告。</p>{% endif %}
+{% for item in snapshot.interventions %}<h3>{{ item.action.title }} · 第 {{ item.action.geo_step }} 步 · cohort 证据时间线</h3><ul>{% for event in item.timeline %}<li>{{ event.event_at }} · {{ event.description }}</li>{% endfor %}</ul>{% endfor %}
+</section>
+
+{% if internal %}
+<section><h2>内部成本与质量</h2><p class="cost">测量成本：{{ snapshot.costs.amount }}（{% if snapshot.costs.unknown %}部分价格未知{% else %}按已配置价格{% endif %}）· 分类 {{ snapshot.costs.by_kind }}</p><p class="cost">渠道发布成本：{% if snapshot.intervention_costs %}{% for row in snapshot.intervention_costs %}Publication {{ row.publication_id }} = {{ row.cost if row.cost is not none else '未知' }} {{ row.currency }}（{{ row.notes }}）；{% endfor %}{% else %}无{% endif %}</p></section>
+{% if snapshot.internal_samples %}<section><h2>原始回答与判定</h2>{% for sample in snapshot.internal_samples %}<article><h3>#{{ sample.id }} · {{ sample.prompt_text }} · {{ sample.engine_name }} · Round {{ sample.round_no }}</h3><div class="evidence">{{ sample.raw_text }}</div><table><tbody>{% for obs in sample.observations %}<tr><td>{{ obs.name }}</td><td>{{ observation_labels.get(obs.entity_status,obs.entity_status) }} / {{ observation_labels.get(obs.depth,obs.depth) }} / {{ observation_labels.get(obs.sentiment,obs.sentiment) }}</td><td>{{ obs.evidence }}</td><td>{{ observation_labels.get(obs.judge_status,obs.judge_status) }} r{{ obs.revision }}</td></tr>{% endfor %}</tbody></table></article>{% endfor %}</section>{% endif %}
+{% endif %}
+
+<footer>GeoPulse 自托管测量 · 报告快照 {{ snapshot.data_snapshot_hash if snapshot.data_snapshot_hash else '创建时冻结' }}<br>自动检查不等于人工审批；不承诺排名或引用率，不将 API 结果表述为消费者产品端实际回答。</footer>
+</main></body></html>

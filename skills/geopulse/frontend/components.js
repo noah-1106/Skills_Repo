@@ -47,6 +47,11 @@ export const labels = {
   brand: "品牌词", scene: "场景词", compare: "对比词", choice: "选购词", discovery: "发现型", navigation: "导航型",
   client_confirmed: "客户已确认适用", eligible: "内部确认适用", not_eligible: "不适用",
   "human-arbitrated": "管理员仲裁", "human-review": "人工修订", "demo-rules": "演示规则",
+  evidence_linked: "已链接证据", pending_measurement: "待测量", measured: "已有测量",
+  insufficient_evidence: "证据不足", incomparable: "不可比", legacy_unavailable: "历史证据不可用",
+  legacy: "历史记录", superseded: "已被新版本替代", not_attributable: "暂无法归因", improved: "观察到改善", not_improved: "未观察到改善",
+  owned_site: "客户官网", owned: "自有渠道", partner: "合作渠道", paid: "付费渠道", earned: "自然获得", unknown: "未知",
+  fact_page: "事实页", faq: "FAQ", comparison: "对比内容", documentation: "文档",
 };
 export const label = (value) => labels[value] || text(value);
 export function badge(value, tone) {
@@ -112,8 +117,10 @@ export function metric(labelText, metricData, options = {}) {
 export function field(labelText, control, help = "", full = false) {
   const id = control.id || `field-${Math.random().toString(36).slice(2, 9)}`;
   control.id = id;
+  const helpId = help ? `${id}-help` : "";
+  if (helpId) control.setAttribute("aria-describedby", [control.getAttribute("aria-describedby"), helpId].filter(Boolean).join(" "));
   return h("div", { class: `field${full ? " full" : ""}` }, h("label", { for: id }, labelText), control,
-    help ? h("small", {}, help) : null);
+    help ? h("small", { id: helpId }, help) : null);
 }
 
 export function select(options, value = "", attrs = {}) {
@@ -130,17 +137,37 @@ export function textarea(value = "", attrs = {}) { return h("textarea", attrs, v
 export function checkbox(labelText, checked = false, help = "", attrs = {}) {
   const control = h("input", { type: "checkbox", checked, ...attrs });
   control.id = control.id || `field-${Math.random().toString(36).slice(2, 9)}`;
-  return { control, node: h("div", { class: "check-field" }, control, h("label", { for: control.id }, labelText, help ? h("small", {}, help) : null)) };
+  const helpId = help ? `${control.id}-help` : "";
+  if (helpId) control.setAttribute("aria-describedby", [control.getAttribute("aria-describedby"), helpId].filter(Boolean).join(" "));
+  return { control, node: h("div", { class: "check-field" }, control, h("label", { for: control.id }, labelText, help ? h("small", { id: helpId }, help) : null)) };
 }
 
 let toastTimer;
+export function dismissToast() {
+  const node = document.getElementById("toast");
+  clearTimeout(toastTimer);
+  node.className = "toast";
+  node.replaceChildren();
+}
 export function toast(message, isError = false) {
   const node = document.getElementById("toast");
-  node.textContent = message;
+  dismissToast();
+  const close = h("button", { class: "toast-close", type: "button", "aria-label": "关闭提示", onClick: dismissToast }, "×");
+  node.append(h("span", { class: "toast-message" }, message));
+  if (isError) node.append(close);
   node.className = `toast show${isError ? " error" : ""}`;
   node.setAttribute("role", isError ? "alert" : "status");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { node.className = "toast"; }, isError ? 6500 : 3500);
+  node.setAttribute("aria-live", isError ? "assertive" : "polite");
+  const pause = () => clearTimeout(toastTimer);
+  const resume = () => {
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(dismissToast, isError ? 6500 : 3500);
+  };
+  node.onpointerenter = pause;
+  node.onpointerleave = resume;
+  node.onfocusin = pause;
+  node.onfocusout = resume;
+  resume();
 }
 
 export function loadingSkeleton() {
@@ -153,14 +180,18 @@ export function loadingSkeleton() {
 }
 
 const drawerStack = [];
+export function closeAllDrawers() {
+  [...drawerStack].reverse().forEach((entry) => entry.close({ restoreFocus: false, notify: false }));
+}
 export function drawer(title, content, options = {}) {
+  dismissToast();
   const root = document.getElementById("drawer-root");
   const previousFocus = document.activeElement;
   const background = document.getElementById("app-shell")?.hidden ? document.getElementById("login-view") : document.getElementById("app-shell");
   const previousBackdrop = drawerStack.at(-1)?.backdrop;
   if (previousBackdrop) previousBackdrop.inert = true;
   let closed = false;
-  const close = () => {
+  const close = ({ restoreFocus = true, notify = true } = {}) => {
     if (closed) return;
     closed = true;
     const index = drawerStack.findIndex((entry) => entry.backdrop === backdrop);
@@ -172,14 +203,19 @@ export function drawer(title, content, options = {}) {
       if (background) background.inert = false;
     }
     document.removeEventListener("keydown", onKeydown);
-    if (previousFocus?.isConnected) previousFocus.focus();
-    options.onClose?.();
+    if (restoreFocus && previousFocus?.isConnected) previousFocus.focus();
+    if (notify) options.onClose?.();
   };
   const body = h("div", { class: "drawer-body" }, content);
   const titleId = `drawer-title-${Math.random().toString(36).slice(2, 9)}`;
-  const dialog = h("section", { class: `drawer${options.wide ? " wide-drawer" : ""}`, role: "dialog", "aria-modal": "true", "aria-labelledby": titleId },
-    h("div", { class: "drawer-head" }, h("h2", { id: titleId }, title), h("button", { class: "drawer-close", "aria-label": "关闭对话框", onClick: close }, "×")), body);
+  const dialog = h("section", { class: `drawer${options.wide ? " wide-drawer" : ""}`, role: "dialog", "aria-modal": "true", "aria-labelledby": titleId, tabindex: -1 },
+    h("div", { class: "drawer-head" }, h("h2", { id: titleId }, title), h("button", { class: "drawer-close", "aria-label": "关闭对话框", onClick: () => close() }, "×")), body);
   const backdrop = h("div", { class: "drawer-backdrop", onClick: (event) => { if (event.target === backdrop && options.dismissible !== false) close(); } }, dialog);
+  const focus = () => {
+    const control = [...body.querySelectorAll("input:not([type=hidden]):not(:disabled),select:not(:disabled),textarea:not(:disabled)")]
+      .find((node) => !node.closest("[hidden],[inert]") && node.getClientRects().length);
+    (control || dialog.querySelector(".drawer-close") || dialog).focus({ preventScroll: true });
+  };
   const onKeydown = (event) => {
     if (drawerStack.at(-1)?.backdrop !== backdrop) return;
     if (event.key === "Escape" && options.dismissible !== false) { event.preventDefault(); close(); return; }
@@ -192,13 +228,35 @@ export function drawer(title, content, options = {}) {
       else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
     }
   };
-  drawerStack.push({ backdrop });
+  drawerStack.push({ backdrop, close });
   document.addEventListener("keydown", onKeydown);
   document.body.style.overflow = "hidden";
   if (background) background.inert = true;
   root.append(backdrop);
-  requestAnimationFrame(() => dialog.querySelector("input:not([type=hidden]),select,textarea,button")?.focus());
-  return { body, close, dialog };
+  requestAnimationFrame(() => {
+    if (!closed && drawerStack.at(-1)?.backdrop === backdrop && !dialog.contains(document.activeElement)) focus();
+  });
+  return { body, close, dialog, focus };
+}
+
+export function onSubmit(form, handler) {
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (form.getAttribute("aria-busy") === "true") return;
+    const submit = event.submitter || form.querySelector("button[type=submit],button:not([type])");
+    form.setAttribute("aria-busy", "true");
+    if (submit) submit.disabled = true;
+    try {
+      await handler(event);
+    } catch (error) {
+      if (form.isConnected) formError(form, error);
+    } finally {
+      if (form.isConnected) {
+        form.setAttribute("aria-busy", "false");
+        if (submit) submit.disabled = false;
+      }
+    }
+  });
 }
 
 export function confirmDialog(title, description, confirmLabel, onConfirm, dangerous = false) {
@@ -206,13 +264,10 @@ export function confirmDialog(title, description, confirmLabel, onConfirm, dange
   const modal = drawer(title, h("form", {}, h("p", {}, description), error,
     h("div", { class: "form-actions" }, h("button", { type: "button", class: "button secondary", onClick: () => modal.close() }, "取消"),
       h("button", { type: "submit", class: `button${dangerous ? " danger" : ""}` }, confirmLabel))));
-  modal.body.querySelector("form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const submit = event.target.querySelector("button[type=submit]");
-    submit.disabled = true;
+  onSubmit(modal.body.querySelector("form"), async () => {
     error.hidden = true;
-    try { await onConfirm(); modal.close(); }
-    catch (caught) { error.textContent = caught.message; error.hidden = false; submit.disabled = false; }
+    await onConfirm();
+    modal.close();
   });
   return modal;
 }
@@ -220,8 +275,15 @@ export function confirmDialog(title, description, confirmLabel, onConfirm, dange
 export function formError(form, error) {
   let node = form.querySelector(".form-error");
   if (!node) { node = h("div", { class: "form-error", role: "alert" }); form.prepend(node); }
+  node.setAttribute("role", "alert");
+  node.tabIndex = -1;
   node.textContent = error?.detail?.errors?.join?.("\n") || error.message || String(error);
   node.hidden = false;
+  requestAnimationFrame(() => {
+    if (!node.isConnected) return;
+    node.focus({ preventScroll: true });
+    node.scrollIntoView({ block: "nearest" });
+  });
 }
 
 export function formatDate(value, timezone = "Asia/Shanghai") {
@@ -248,7 +310,7 @@ export function tabs(items, current, onChange) {
     const button = h("button", {
       id: `${group}-${index}`, role: "tab", type: "button", "aria-selected": active,
       "aria-controls": `${group}-panel`, tabindex: active ? 0 : -1,
-      onClick: () => onChange(item.value),
+      onClick: () => { pendingTabFocus = `${group}-${index}`; onChange(item.value); },
       onKeydown: (event) => {
         const keys = { ArrowRight: 1, ArrowLeft: -1 };
         let next;
@@ -291,11 +353,7 @@ export function budgetConfirmationDialog(error, retry) {
     field("超限执行理由", reason, "理由会与本次预算预留一起写入审计，不会修改预算额度"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "确认超限并继续")));
   const modal = drawer("预算超限确认", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await retry(reason.value); modal.close(); }
-    catch (caught) { formError(form, caught); }
-  });
+  onSubmit(form, async () => { await retry(reason.value); modal.close(); });
   return modal;
 }
 

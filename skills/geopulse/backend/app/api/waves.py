@@ -5,12 +5,16 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..db import all_rows, connect, dumps, loads, one, transaction, utc_now
 from ..engine.compare import compare_metrics
+from ..engine.metric_definitions import metric_appendix
 from ..engine.metrics import calculate_metrics
 from ..security import audit, project_context, require_admin
 from ..services.budgets import authorize_budget, reserve, scale_estimate
+from ..services.handoff import delivery_handoff
 from ..services.measurement import (create_run, create_wave, engine_public, estimate_wave, load_run_samples,
                                     run_progress, _finalize_run)
 from ..services.reporting import wave_metrics
+from ..services.quality import run_quality
+from ..services.readiness import wave_readiness
 from ..services.state import scoped_object, transition
 from .schemas import ObservationRevisionIn, RunCreateIn, StatusIn, WaveIn
 
@@ -39,10 +43,12 @@ def wave_public(conn, wave: dict, role: str = "admin") -> dict:
     result["protocol"] = loads(result.pop("protocol_json"), {})
     result["stats"] = loads(result.pop("stats_json"), {})
     result["estimate"] = estimate_wave(conn, wave)
+    result["readiness"] = wave_readiness(conn, wave)
     if role in ("reviewer", "viewer"):
         for key in ("estimated_cost", "max_estimated_cost", "known_cost", "currency", "unknown_components", "by_engine"):
             result["estimate"].pop(key, None)
         result["stats"].pop("budget", None)
+    result["readiness"]["estimate"] = result["estimate"]
     result["runs"] = all_rows(conn, "SELECT id,attempt_no,status,started_at,finished_at,error FROM runs WHERE wave_id=? ORDER BY attempt_no DESC", (wave["id"],))
     return result
 
@@ -73,12 +79,13 @@ def get_wave(project_id: int, wave_id: int, request: Request):
 def new_run(project_id: int, wave_id: int, request: Request, payload: RunCreateIn | None = None):
     context = project_context(request, project_id, "analyst")
     reason = payload.budget_confirmation_reason if payload else ""
-    if reason:
+    if reason or (payload and payload.confirm_judge_disabled):
         context = require_admin(request, project_id)
     with connect() as conn:
         wave = scoped_object(conn, "waves", wave_id, context["project"])
     run = create_run(context["project"], wave, context["user"]["id"], confirmation_reason=reason,
-                     allow_manual=True, confirm_browser=bool(payload and payload.confirm_browser))
+                     allow_manual=True, confirm_browser=bool(payload and payload.confirm_browser),
+                     confirm_judge_disabled=bool(payload and payload.confirm_judge_disabled))
     return {"run": run_public(run), "progress": {"total": 0, "finished": 0, "progress": 0}}
 
 
@@ -119,7 +126,16 @@ def get_run(project_id: int, run_id: int, request: Request):
         run = scoped_object(conn, "runs", run_id, context["project"])
         result = run_public(run)
         result["progress"] = run_progress(conn, run_id)
+        result["quality"] = run_quality(conn, run)
         return result
+
+
+@router.get("/runs/{run_id}/handoff")
+def handoff(project_id: int, run_id: int, request: Request):
+    context = project_context(request, project_id)
+    with connect() as conn:
+        run = scoped_object(conn, "runs", run_id, context["project"])
+        return delivery_handoff(conn, context["project"], run)
 
 
 @router.post("/runs/{run_id}/cancel")
@@ -217,6 +233,8 @@ def metrics(project_id: int, run_id: int, request: Request):
         result = calculate_metrics(samples, run_context["primary_id"], loads(wave["stats_json"], {}))
         result.pop("pairs", None)
         result["progress"] = run_progress(conn, run_id)
+        result["delivery_quality"] = run_quality(conn, run)
+        result["metric_appendix"] = metric_appendix(result)
         return result
 
 

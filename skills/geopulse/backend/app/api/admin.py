@@ -239,10 +239,7 @@ def create_schedule(project_id: int, payload: ScheduleIn, request: Request):
             raise HTTPException(409, "人工 Consumer Web 不能自动调度；请在测量页显式创建人工采集 Run")
         anchor = wave["anchor_at"]
         if payload.action_id:
-            action = scoped_object(conn, "actions", payload.action_id, context["project"])
-            if not action.get("published_at"):
-                raise HTTPException(409, "Action 尚未填写实际发布时间，不能作为复测锚点")
-            anchor = action["published_at"]
+            raise HTTPException(409, "Action 复测必须通过 /actions/{id}/remeasurements 创建轮次，不能直接创建独立调度")
         try:
             anchor_at = parse_time(anchor)
             next_run = parse_time(payload.scheduled_at) if payload.scheduled_at else anchor_at + timedelta(days=payload.recurrence_days or 0)

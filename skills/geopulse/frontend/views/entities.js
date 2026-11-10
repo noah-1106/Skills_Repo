@@ -1,5 +1,5 @@
 import { api } from "../api.js";
-import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, label } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, label, onSubmit } from "../components.js";
 
 export async function renderEntities(root, ctx) {
   const includeHistory = ctx.params.get("history") === "1";
@@ -11,7 +11,10 @@ export async function renderEntities(root, ctx) {
   if (["admin", "analyst"].includes(ctx.role)) actions.push(h("button", { class: "button", onClick: () => entityDialog(ctx) }, "新增实体"));
   clear(root);
   root.append(pageHead("品牌实体工作台", "先确认“这个名字究竟是谁”，再计算有效提及。字符串命中不等于目标实体已确认。", actions));
-  root.append(h("div", { class: "inline-panel emphasis" }, h("h2", {}, pending.length ? `${pending.length} 个实体版本等待管理员审核` : "当前实体池已完成审核"),
+  const poolTitle = !data.items.length ? "还没有实体，先建立主品牌与竞品池"
+    : pending.length ? `${pending.length} 个实体版本等待管理员审核`
+      : primary ? "当前实体池已完成审核" : "实体池尚无已确认主品牌";
+  root.append(h("div", { class: "inline-panel emphasis" }, h("h2", {}, poolTitle),
     h("p", { class: "muted" }, primary ? `当前主品牌：${primary.name}（实体版本 v${primary.version}）。有效提及、推荐与 SoV 只使用 confirmed 实体。`
       : "尚未确认主品牌。创建主品牌草稿后，由管理员填写消歧依据并确认，才能创建 wave。"),
     pending.length && ctx.role === "admin" ? h("button", { class: "button", onClick: () => reviewDialog(ctx, pending[0]) }, `审核 ${pending[0].name}`) : null));
@@ -26,13 +29,13 @@ export async function renderEntities(root, ctx) {
       h("div", {}, badge(entity.status), h("span", { class: "cell-sub" }, `v${entity.version}${entity.review_reason ? ` · ${entity.review_reason}` : ""}`)),
       h("div", { class: "button-group" },
         ["draft", "pending_review"].includes(entity.status) && ctx.role === "admin" ? h("button", { class: "button small-button", onClick: () => reviewDialog(ctx, entity) }, "审核") : null,
-        !["draft", "pending_review"].includes(entity.status) && ["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button small-button secondary", onClick: () => entityDialog(ctx, entity) }, "新版本") : null,
+        !entity.valid_to && entity.status !== "rejected" && !["draft", "pending_review"].includes(entity.status) && ["admin", "analyst"].includes(ctx.role) ? h("button", { class: "button small-button secondary", onClick: () => entityDialog(ctx, entity) }, "新版本") : null,
         h("button", { class: "button small-button ghost", onClick: () => entityDetail(entity) }, "实体卡")
       )
     ];
   });
   root.append(section(includeHistory ? "全部实体版本" : "当前实体池", "开放候选必须经管理员分配角色并确认后才进入竞品池", dataTable(
-    ["实体 / 别名", "角色", "品类 / 官网", "状态 / 版本", "操作"], rows), [h("button", { class: "button secondary small-button", onClick: () => poolDiff(ctx, data.items) }, "竞品池 diff")]));
+    ["实体 / 别名", "角色", "品类 / 官网", "状态 / 版本", "操作"], rows, "还没有实体。使用上方“新增实体”创建主品牌或竞品草稿。"), [h("button", { class: "button secondary small-button", onClick: () => poolDiff(ctx, data.items) }, "竞品池 diff")]));
 }
 
 function entityForm(entity) {
@@ -56,16 +59,13 @@ function entityDialog(ctx, entity) {
     field("排除语境", controls.excludes, "例如 GeoPulse 软件需要排除地质、地球物理语境", true)), controls.allow.node,
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, entity ? "创建不可变新版本" : "保存为待审核草稿")));
   const modal = drawer(entity ? `新版本 · ${entity.name}` : "新增品牌实体", form, { wide: true });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  onSubmit(form, async () => {
     const payload = { name: controls.name.value, role: controls.role.value, allow_conflicts: controls.allow.control.checked,
       entity_card: { aliases: controls.aliases.value.split(/[,，]/).map((value) => value.trim()).filter(Boolean),
         category: controls.category.value, company: controls.company.value, domain: controls.domain.value.replace(/^https?:\/\//, "").replace(/\/$/, ""),
         exclude_contexts: controls.excludes.value.split("\n").map((value) => value.trim()).filter(Boolean) } };
-    try {
-      await api.post(entity ? `/api/projects/${ctx.project.id}/entities/${entity.id}/versions` : `/api/projects/${ctx.project.id}/entities`, payload);
-      modal.close(); toast("实体草稿已保存，等待管理员审核"); ctx.refresh();
-    } catch (error) { formError(form, error); }
+    await api.post(entity ? `/api/projects/${ctx.project.id}/entities/${entity.id}/versions` : `/api/projects/${ctx.project.id}/entities`, payload);
+    modal.close(); toast("实体草稿已保存，等待管理员审核"); ctx.refresh();
   });
 }
 
@@ -73,14 +73,20 @@ function reviewDialog(ctx, entity) {
   const reason = textarea("", { required: true, placeholder: "记录官网、公司、品类或排除语境依据" });
   const role = select([{ value: "competitor", label: "确认为竞品" }, { value: "primary", label: "确认为主品牌" }], entity.role === "primary" ? "primary" : "competitor");
   const decision = select([{ value: "confirmed", label: "确认实体与角色" }, { value: "rejected", label: "排除此版本" }], "confirmed");
+  const roleField = field("确认后的角色", role, "候选实体不能直接计入正式竞品指标");
+  const syncDecision = () => {
+    roleField.hidden = decision.value === "rejected";
+    role.disabled = decision.value === "rejected";
+  };
+  decision.addEventListener("change", syncDecision);
+  syncDecision();
   const form = h("form", {}, h("p", {}, `${entity.name} · 当前角色 ${label(entity.role)} · v${entity.version}`),
-    field("审核决定", decision), field("确认后的角色", role, "候选实体不能直接计入正式竞品指标"), field("消歧依据", reason),
+    field("审核决定", decision), roleField, field("消歧依据", reason),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "保存审核决定")));
   const modal = drawer("管理员实体审核", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api.post(`/api/projects/${ctx.project.id}/entities/${entity.id}/review`, { decision: decision.value, role: decision.value === "confirmed" ? role.value : null, reason: reason.value }); modal.close(); toast("实体审核已留痕"); ctx.refresh(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post(`/api/projects/${ctx.project.id}/entities/${entity.id}/review`, { decision: decision.value, role: decision.value === "confirmed" ? role.value : null, reason: reason.value });
+    modal.close(); toast("实体审核已留痕"); ctx.refresh();
   });
 }
 

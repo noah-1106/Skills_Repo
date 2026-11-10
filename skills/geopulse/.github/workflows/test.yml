@@ -50,6 +50,10 @@ jobs:
         run: python tests/browser_model_execution.py
       - name: Offline authorized Consumer Web Collector checks
         run: python tests/browser_web_collector.py
+      - name: Real-browser intervention evidence chain checks
+        run: python tests/browser_interventions.py
+      - name: Offline Judge quality and delivery handoff checks
+        run: python tests/browser_delivery_quality.py
       - name: Upload acceptance results
         if: always()
         uses: actions/upload-artifact@v4

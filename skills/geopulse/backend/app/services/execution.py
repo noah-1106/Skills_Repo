@@ -10,9 +10,9 @@ from ..db import loads
 
 DEFAULT_SYSTEM_PROMPT = "客观、准确地回答用户问题。不要为了迎合监测而刻意添加或回避品牌；不确定时明确说明。"
 BUILTIN_DEFAULTS = {
-    "answer": {"temperature": 0.2, "max_tokens": 700, "system_prompt": DEFAULT_SYSTEM_PROMPT},
+    "answer": {"temperature": 0.2, "max_tokens": 65536, "system_prompt": DEFAULT_SYSTEM_PROMPT},
     "judge": {"temperature": 0, "max_tokens": 1800, "system_prompt": DEFAULT_SYSTEM_PROMPT},
-    "health": {"temperature": 0, "max_tokens": 8, "system_prompt": DEFAULT_SYSTEM_PROMPT},
+    "health": {"temperature": None, "max_tokens": None, "system_prompt": DEFAULT_SYSTEM_PROMPT},
 }
 PARAMETER_KEYS = ("temperature", "max_tokens", "system_prompt")
 

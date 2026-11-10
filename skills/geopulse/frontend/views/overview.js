@@ -30,14 +30,26 @@ export async function renderOverview(root, ctx) {
   else if (!waves.length && !hasConfirmedEntity) action = { route: "entities", label: "检查品牌实体", params: {} };
   else if (!waves.length && !hasFrozenPromptSet) action = { route: "prompts", label: "审核并冻结问题集", params: {} };
   else if (officialWave) action = { route: "reports", label: "查看对比与报告", params: { wave: officialWave.id } };
-  const runningWave = waves.find((wave) => ["running", "planned"].includes(wave.status));
-  if (!nextTodo && runningWave) action = { route: "measure", label: runningWave.status === "running" ? "查看测量进度" : "继续测量方案", params: { wave: runningWave.id } };
+  const runningWave = waves.find((wave) => wave.status === "running");
+  const plannedWave = waves.find((wave) => wave.status === "planned");
+  if (!nextTodo && runningWave) action = { route: "measure", label: "查看测量进度", params: { wave: runningWave.id } };
+  else if (!nextTodo && !officialWave && plannedWave) action = { route: "measure", label: "继续测量方案", params: { wave: plannedWave.id } };
   const actionQuery = new URLSearchParams(action.params).toString();
 
   let currentStep = overview.counts.prompt_sets.frozen ? "measure" : "define";
   if (officialWave) currentStep = metrics?.quality?.pending_review_answers ? "review" : "deliver";
   if (nextTodo?.kind === "entities") currentStep = "define";
   if (["opportunities", "reports"].includes(nextTodo?.kind)) currentStep = "deliver";
+  if (!nextTodo && (runningWave || (!officialWave && plannedWave))) currentStep = "measure";
+  const stageTitle = nextTodo ? `有 ${overview.todos.reduce((sum, item) => sum + item.count, 0)} 项工作需要处理`
+    : runningWave ? `「${runningWave.label}」正在执行`
+      : officialWave ? "最新正式测量已就绪"
+        : plannedWave ? "测量方案已保存，等待创建 Run" : "先建立可复现的测量基线";
+  const stageDescription = nextTodo ? "先完成审核与口径确认，再解读结果。系统不会把候选机会自动写成客户结论。"
+    : runningWave ? "当前 Run 正在执行。先查看真实进度和失败样本，完成后再由管理员指定正式 Run。"
+      : officialWave ? "正式 run 已由管理员指定。下一步可复核证据、确认机会或创建不可变报告快照。"
+        : plannedWave ? "方案尚未执行。检查冻结口径与调用预估后，再明确创建 Run。"
+          : "确认实体和问题集版本后创建 wave；创建方案不会调用外部引擎，确认 run 前可查看调用预估。";
 
   clear(root);
   root.append(pageHead("项目总览", `${ctx.project.client_name} · ${ctx.project.category || "未设置品类"} · ${ctx.project.market}，所有时间以 ${ctx.project.timezone} 展示。`,
@@ -46,10 +58,8 @@ export async function renderOverview(root, ctx) {
   const promptCount = Object.values(overview.counts.prompt_sets).reduce((sum, count) => sum + count, 0);
   const current = h("div", { class: "stage-current" },
     h("div", { class: "stage-kicker" }, `当前阶段 · ${overview.stage}`),
-    h("h2", {}, nextTodo ? `有 ${overview.todos.reduce((sum, item) => sum + item.count, 0)} 项工作需要处理` : officialWave ? "最新正式测量已就绪" : "先建立可复现的测量基线"),
-    h("p", {}, nextTodo ? "先完成审核与口径确认，再解读结果。系统不会把候选机会自动写成客户结论。"
-      : officialWave ? "正式 run 已由管理员指定。下一步可复核证据、确认机会或创建不可变报告快照。"
-      : "确认实体和问题集版本后创建 wave；创建方案不会调用外部引擎，确认 run 前可查看调用预估。"),
+    h("h2", {}, stageTitle),
+    h("p", {}, stageDescription),
     waves.length ? h("a", { class: "button", href: `#/${action.route}${actionQuery ? `?${actionQuery}` : ""}` }, action.label) : null);
 
   if (!waves.length) {

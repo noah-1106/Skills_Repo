@@ -68,6 +68,7 @@ def test_action_outcome_rejects_baseline_as_its_own_remeasurement(client):
 
 @pytest.mark.parametrize("improved", [False, True])
 def test_action_outcome_requires_strict_formal_comparison(client, improved):
+    api(client, "PUT", f"/api/projects/{client.project_id}/settings", json={"settings": {"small_sample_n": 1}})
     baseline, baseline_run = make_official(client, "基线")
     create_gap(client, baseline_run["id"])
     target, target_run = make_official(client, "复测")

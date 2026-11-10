@@ -52,11 +52,11 @@ A skill repository developed by Noah and his AI assistants. All open source, fee
 - **限制**：图片 ≤10MB；视频 ≤50MB；国外 URL 源智谱服务端拉取易失败（加 `--download` 本地下载绕过）；并发约 5 QPS；空回答时加大 --max-tokens（推理占额）
 
 #### geopulse
-- **主开发仓库 / Primary repository**：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）；`skills/geopulse` 保留 v2.3 分发快照，后续开发、Issue、CI 和 Release 以独立仓库为准
+- **主开发仓库 / Primary repository**：[noah-1106/geopulse](https://github.com/noah-1106/geopulse)（公开）；`skills/geopulse` 保留 v2.5 分发镜像，后续开发、Issue、CI 和 Release 以独立仓库为准
 - **技能名称 / Name**：自托管多客户 GEO 交付工作台 / Self-hosted Multi-client GEO Delivery Workbench
-- **技能描述 / Description**：完整前后端自包含，覆盖问题与实体口径、可恢复 Wave/Run 测量、独立 Judge、严格同口径比较、机会与七步 Action、不可变报告，以及权限、调度、成本和备份。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 和授权 DeepSeek/Kimi 网页采集；API 与消费端观察始终分开
-- **当前版本 / Version**：2.3.0
-- **发布日期 / Date**：2026-11-08
+- **技能描述 / Description**：完整前后端自包含，覆盖问题与实体口径、跑前准备单、可恢复 Wave/Run 测量、独立 Judge 与 Judge-only 补判、严格同口径比较、Intervention 证据链、只读交付 handoff、不可变报告，以及权限、调度、成本和备份。支持 Demo、OpenAI-compatible、Kimi/DeepSeek Search + Chat、人工 Consumer Web 和授权 DeepSeek/Kimi 网页采集；API 与消费端观察始终分开
+- **当前版本 / Version**：2.5.0
+- **发布日期 / Date**：2026-11-10
 - **安装 / Install**：主开发请克隆独立仓库；使用本快照可运行 `cd skills/geopulse && python3 -m venv .venv && .venv/bin/pip install -r requirements-lock.txt`，再运行 `.venv/bin/python backend/run.py`
 - **自检 / Self-test**：在 `skills/geopulse` 运行 `.venv/bin/python -m pytest -q`；完整测试与真实浏览器验收入口见 [Skill 说明](skills/geopulse/SKILL.md)
 - **浏览器**：`http://127.0.0.1:8700`（项目总览 / 问题集 / 实体 / 测量 / 证据 / 机会行动 / 对比报告 / 系统管理）

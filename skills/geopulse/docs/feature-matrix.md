@@ -1,6 +1,6 @@
 # GeoPulse v2 功能对照矩阵
 
-更新时间：2026-11-08。此矩阵按实际代码和验收记录描述能力，不把“能保存配置”写成“已自动执行”，也不把 mock 写成真实厂商验证。
+更新时间：2026-11-10。此矩阵按实际代码和验收记录描述能力，不把“能保存配置”写成“已自动执行”，也不把 mock 写成真实厂商验证。
 
 状态说明：
 
@@ -17,6 +17,9 @@
 | 问题集创建、生成、导入、审核、冻结 | `/prompt-sets*` | Prompt 版本、内容 hash、冻结快照、diff | 写入 analyst；审核/冻结 admin | `test_workflow.py`、浏览器 scaffold | 已闭环 |
 | 实体卡、冲突、消歧和版本 | `/entities*` | 不可变实体版本、审核理由、竞品池 | 新建 analyst；审核 admin | `test_workflow.py`、浏览器 XSS/审核 | 已闭环 |
 | Wave 创建与冻结预估 | `POST /waves`、`services.costs` | 公开协议签名 + 按回答引擎有效参数 + 内部执行快照 | analyst；成本仅 admin/analyst | `test_execution_governance.py`、`test_model_execution_v22.py` | 已闭环 |
+| 跑前测量准备单 | `wave_readiness()`、Wave API | Judge/参数/调用/费用、只读历史健康、耗时和截断风险；无自动健康检查 | 全项目角色；成本按角色裁剪 | 无历史耗时未知、停用引擎、真实 disabled Judge 确认和 Chrome | 已闭环；历史耗时不是承诺 |
+| Judge-only 补判 | `/runs/{id}/judge-batches`、`/judge-batches/{id}` | 全量/选题、独立预算、取消/恢复/明确失败重试；只追加 Observation revision，answer/search=0 | 创建/取消/重试 admin；读取按角色裁剪 | 16 条不重采、raw/hash/Web 排除、interrupted_unknown、权限、导出和 Chrome | 已闭环；真实补判逐次确认 |
+| 交付质量与唯一下一步 | Run quality、report gates、`GET /runs/{id}/handoff` | effective Judge lineage、fallback/pending/provisional、模型、报告/机会/工时状态 | 全项目角色；无成本/秘密 | 混合覆盖阻断、完整覆盖可比较、旧报告新版、0 候选和完整交接测试 | 已闭环；不写外部业务孪生 |
 | Run 创建、取消、重试、正式指定 | `/waves/{id}/runs`、`/runs/{id}/*` | SQLite 队列、worker、取消与 revision 保留 | 创建/取消 analyst；重试/正式 admin | worker、预算和浏览器测试 | 已闭环 |
 | Consumer Web 目标与人工冻结协议 | `manual_web + consumer_web`、`collection_method=manual` | 单一 Web 目标、实际页面/会话协议、独立 Judge 快照 | 目标写入 admin；Wave 创建 analyst | `test_manual_web.py`、真实 Chrome | 已闭环；人工辅助采集 |
 | 授权浏览器冻结协议与 Run 确认 | `collection_method=browser_assisted`、`browser_driver`、`confirm_browser` | `browser-web-v1`；桌面端、已登录、新会话、单轮无追问；active session 检查 | Wave/Run analyst；重试 admin | `test_browser_collector.py`、离线真实 Chrome | 已闭环（离线）；真实平台 live 未验证 |
@@ -26,11 +29,13 @@
 | 人工草稿、截图与不可变提交 | `/answers/{id}/collection*`、`/attachments*` | 草稿、raw hash、SQLite 证据 BLOB、人工引用、失败/重采 | 编辑 admin/analyst；只读角色无内部附件 | API、权限、hash、迁移与真实 Chrome | 已闭环；人工辅助采集 |
 | 证据清单、原文和实体判定 | `/runs/{id}/answers`、`/answers/{id}` | 原始回答、citation、operation、observation revision | 修订 analyst；仲裁 admin；原文 admin/analyst | `test_roles.py`、真实浏览器 | 已闭环 |
 | 候选发现与适用性审核 | `/opportunities*` | 证据 JSON、冻结权重评分、审核事件 | 发现 analyst；适用性 admin | `test_workflow.py`、浏览器 | 已闭环 |
-| 七步 Action 与发布 | `/actions*` | 状态机、实际发布 URL/时间、共时事件 | analyst/admin 分节点 | 浏览器、`test_action_verification.py` | 已闭环 |
-| Action 复测与改善结论 | `transition_action`、scheduler、compare | 创建真实 Schedule；要求另一 Wave 的正式 Run 和严格比较 | 安排 analyst；结论 admin | 改善/未改善/同基线拒绝专项测试 | 已闭环 |
+| 七步 Intervention、Brief 与内容资产 | `/actions*`、`/briefs*`、`/assets*` | Action 即 cohort；版本化 Brief/Asset；baseline evidence refs、pending 阻断、审批冻结 | 编辑 analyst；审批 admin | `test_interventions.py`、真实 Chrome | 已闭环 |
+| 多渠道 Publication 与共时事件 | `/actions/{id}/publications` | Asset 与渠道分离；不可变 URL/时间/成本/币种/商业关系；首条兼容投影 | 登记 admin；成本仅 admin/analyst | 多资产/多渠道、成本隔离与浏览器测试 | 已闭环 |
+| D7/D14/D28 cohort 复测 | `/actions/{id}/remeasurements`、`/remeasurements/{id}/assess`、scheduler、compare | 固定 baseline/target Run、完整 comparison/hash/refs；Provider 只建 Run，Consumer Web 只提醒 | 安排 analyst；评估 admin | 小样本、不可比、冻结 Run、提醒去重和浏览器专项 | 已闭环 |
+| Intervention 时间线与客户决策 | `GET /actions/{id}`、reporting v2 | 实时事件链、三问摘要、唯一下一步；无 per-asset delta | 全项目角色；内部 refs/成本服务端裁剪 | `test_interventions.py`、viewer/reviewer Chrome | 已闭环；不作因果归因 |
 | 同口径变化比较 | `GET /compare` | pair-key、有效样本完整度、冻结协议 | 全项目角色 | `test_workflow.py`、浏览器小样本 | 已闭环 |
 | API/Web 跨 surface 摘要 | `GET /compare` | `cross_surface`、各自摘要、无严格 delta/迁移 | 全项目角色 | `test_manual_web.py` | 已闭环；不输出跨口径 pp |
-| 报告快照、审批和预览 | `/reports*` | 不可变数据快照、保存 HTML、审批事件 | 创建 analyst；审批 admin | `test_report_gates.py`、浏览器/PDF | 已闭环 |
+| 报告快照、质量/模型/指标附录、审批和预览 | `/reports*`、reporting v2 | 不可变数据快照、JudgeBatch、配置/实际模型、公式/分母、保存 HTML、审批事件 | 创建 analyst；审批 admin；只读角色客户裁剪 | `test_report_gates.py`、`test_delivery_quality.py`、浏览器/PDF | 已闭环 |
 | 报告发送 | `POST /reports/{id}/status` | 只登记接收人/方式说明与审计 | admin | 状态机测试 | **人工登记**；不自动外发 |
 
 ## 2. 执行治理与系统管理
@@ -48,6 +53,7 @@
 | 单次/周期调度 | `/schedules*`、scheduler | 事务认领、周期推进、退避、暂停/恢复/取消、blocked；Consumer Web 创建即拒绝 | 读取项目角色；写入 admin | `test_scheduler_governance.py`、浏览器 | 已闭环 |
 | 告警确认与历史 | `/alerts*` | 去重、确认、恢复、预算/备份/保留/引擎告警 | 读取项目角色；确认 admin | 调度测试、浏览器历史 | 已闭环 |
 | 原文保留预览与清理 | `/retention/*`、后台维护 | tombstone；保留 valid sample、判定、usage 和聚合元数据；同步清理 Web 草稿/引用文本/附件 BLOB | 预览 admin/analyst；执行 admin | `test_retention.py`、`test_manual_web.py`、报告闸门、浏览器 | 已闭环；默认不清理 |
+| 来源域名分类管理 | 项目 `settings.source_domains` | 域名表格、hostname/IDNA 规范化、八类来源；只影响新 Citation | admin 修改并审计；其他角色只读 | 非法 URL 拒绝、历史 Citation 不变和 Chrome 保存 | 已闭环；不自动重分类历史 |
 | 手工工时 | `POST /work-logs` | 业务日期、人员、类型、工时、说明和审计 | admin/analyst | `test_scheduler_governance.py`、浏览器 | 已闭环；不是自动计时 |
 | 在线数据库备份 | `POST /backup`、`migrations.backup` | SQLite backup、相邻 manifest、SHA-256、失败告警/审计 | admin | `test_scheduler_governance.py`、浏览器下载 | 已闭环 |
 | 项目导出 | `GET /export`、`services.exports` | `geopulse-project-v2`；递归清理 secret reference；排除 browser session/profile/lease；附件 base64/hash；checksum | admin | `test_exports.py`、`test_manual_web.py`、`test_browser_collector.py`、浏览器 | 已闭环 |
@@ -65,7 +71,7 @@
 | Consumer Web 报告 | 快照保存采集方法/Driver、冻结协议、独立 Judge、证据覆盖和附件 metadata/hash，不嵌入 BLOB | 客户版不含账号别名、profile、内部截图或内部原文；人工与授权浏览器分别标注，页面引用未自动核验正文支持关系 |
 | 报告导出 | 直接使用创建/审批时保存的 HTML，不用未来模板重排旧快照 | HTML/PDF 返回内容与数据快照 SHA-256，并写导出审计 |
 | 客户版隔离 | 不包含内部成本、内部证据、其他项目或 secret reference | 四角色 API 和 reviewer/viewer 浏览器验证 |
-| 原文清理后的报告 | 旧报告快照不变；包含已清理证据的新报告被闸门阻止 | `test_report_gates.py` |
+| 原文清理后的证据与报告 | 旧报告和已冻结 round comparison/hash 不变；Brief/Round refs 标 `raw_purged`；包含已清理证据的新报告被闸门阻止 | `test_report_gates.py`、`test_interventions.py` |
 
 ## 4. 薄业务 CLI
 
@@ -98,18 +104,22 @@
 | 厂商账单导入与对账 | **不在范围**。当前金额是实际 usage + 管理员价格规则的估算。 |
 | 多节点队列、高可用 | **不在范围**。当前为单节点 FastAPI + SQLite。 |
 | 自动向客户发送报告 | **不在范围**。仅人工登记发送记录。 |
-| 旧 v1 测试数据回迁 | **不在范围**。当前 schema 为 v5；旧测试数据已获准删除。 |
+| 旧 v1 测试数据回迁 | **不在范围**。当前 schema 为 v7；旧测试数据已获准删除。v5→v6 只做保守 Intervention 回填，v6→v7 只增加 JudgeBatch 表和调用关联，不伪造历史 comparison 或改写旧报告。 |
 
 ## 6. 主要验收入口
 
 - `pytest`：后端服务、状态机、权限、预算、调度、保留、导出、报告和 Action 专项。
-- `tests/browser_smoke.py`：八条工作流、报告 PDF、viewer/reviewer、移动导航和证据详情。
+- `tests/browser_smoke.py`：八条工作流、cohort 复测、报告 PDF、viewer/reviewer、移动导航和证据详情。
+- `tests/browser_interventions.py`：pending 阻断、多资产、多渠道、D7/D14/D28、固定评估、三问报告、HTML/PDF、深链刷新、焦点/Escape、viewer/reviewer、1440/768/390 和零外网请求。
 - `tests/browser_governance.py`：结构化价格、软/硬预算、调度 blocked/恢复、告警历史、保留执行、手工工时、键盘 tabs 和移动溢出。
 - `tests/browser_manual_web.py`：真实 Chrome 人工目标/Wave/Run、草稿、PNG、不可变提交、离线 Judge、复核、正式 Run、报告 PDF、失败登记、只读角色和 1440/768/390。
 - `tests/browser_model_execution.py`：模型能力与默认参数、DeepSeek 离线配置、普通 Provider 独立 Judge、冻结协议、worker 归属及 1440/768/390。
+- `tests/browser_delivery_quality.py`：离线准备单、disabled Judge Run、全量/选题补判、人工 revision、正式 Run、机会检查、平台报告审批、handoff、来源分类、键盘焦点及 1440/768/390；外部请求为 0。
 - `tests/browser_web_collector.py`：DeepSeek/Kimi 独立 Driver、登录验证、模式开关、流式回答、引用、截图/HTML、取消/空正文/验证码/selector 异常、原会话恢复不重复提问、无法恢复失败、正式 Run、报告、撤销、四角色及 1440/768/390；全部外部网络被拦截。
 - `tests/test_browser_collector.py`：active session、双 Worker 排他认领、自动证据提交、发送前后恢复、expired 重验、验证码暂停、取消、事务回滚、证据超限和 post-submit retry 不可变性。
 - `tests/test_migration_v5.py`：populated v4→v5 原文、collection/citation ID、引用 origin/title、证据 BLOB、完整性和外键。
+- `tests/test_intervention_migration.py`：populated v5→v6 保留 Answer/raw hash、旧报告 JSON/HTML/hash、legacy Brief/Asset/Publication/Round 回填；populated v6→v7 保留 Answer/Observation/报告并检查新表、外键/integrity 和重复迁移。
+- `tests/test_judge_batches.py`、`tests/test_delivery_quality.py`：补判不重采、预算/恢复/权限、fallback/provisional、严格比较、实际模型、报告附录和完整 handoff。
 - `tests/test_cli.py`：全路由注册、确认、错误、文件、Demo 业务链和人工 Web 证据链。
 - `tests/stress_simulated.py`：仅 DemoProvider 的 2700 次模拟压力验收，不访问外部网络。
 - `scripts/geopulse_ctl.py golden-eval`：小型离线回归集，不代表生产 LLM 准确率。

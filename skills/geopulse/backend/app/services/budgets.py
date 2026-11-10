@@ -38,7 +38,8 @@ def scale_estimate(estimate: dict, factor: float) -> dict:
 def estimate_health(engine: dict) -> dict:
     rule = rule_for(engine)
     health = resolve_execution(engine, "health")
-    operations = [("answer", {"prompt_tokens": 40, "completion_tokens": health.get("max_tokens") or 8})]
+    output_tokens = health.get("max_tokens") or rule.get("estimated_output_tokens") or 700
+    operations = [("answer", {"prompt_tokens": 40, "completion_tokens": output_tokens})]
     if engine.get("mode") == "search":
         operations.insert(0, ("search", {"search_calls": 1}))
     total = 0.0

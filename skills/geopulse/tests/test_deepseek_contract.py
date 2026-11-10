@@ -54,6 +54,8 @@ def test_deepseek_search_chat_contract_long_query_and_citations(monkeypatch):
     assert json.loads(requests[0].data) == {"query": "检" * 128, "count": 10, "need_content": False}
     assert requests[1].full_url == "https://api.deepseek.test/v1/chat/completions"
     chat_payload = json.loads(requests[1].data)
+    assert chat_payload["max_tokens"] == 300
+    assert "max_completion_tokens" not in chat_payload
     assert prompt in chat_payload["messages"][1]["content"]
     assert [item["url"] for item in result.citations] == ["https://example.com/a", "https://example.org/b"]
     assert result.citations[0]["text"] == "alpha"

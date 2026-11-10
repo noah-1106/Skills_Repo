@@ -34,6 +34,11 @@ def fallback_observations(answer_text: str, entities: list[dict], demo: bool = F
         observation = matches.get(int(entity["id"])) or absent_observation(
             entity, "confirmed" if demo else "unknown")
         observation["judge_status"] = "demo-rules" if demo else "rules-fallback"
+        if not demo and observation.get("depth") == "recommended":
+            observation["review_status"] = "pending"
+            observation["review_reason"] = "规则回退推荐深度待确认"
+        elif not demo and observation.get("review_status") == "pending":
+            observation["review_reason"] = "规则回退实体身份待确认"
         observation["judge_meta"] = {"prompt_version": JUDGE_VERSION, "fallback": not demo, "created_at": utc_now()}
         observation["discovered"] = []
         results.append(observation)
@@ -66,7 +71,8 @@ def judge_answer(provider: BaseProvider, answer_text: str, entities: list[dict],
         item = returned.get(entity_id)
         if item is None:
             observation = absent_observation(entity)
-            observation.update(judge_status="llm-judge-incomplete", review_status="pending")
+            observation.update(judge_status="llm-judge-incomplete", review_status="pending",
+                               review_reason="Judge 返回缺少该实体判定")
             observations.append(observation)
             continue
         entity_status = item.get("entity_status") if item.get("entity_status") in ENTITY_STATUSES else "unknown"
@@ -79,10 +85,12 @@ def judge_answer(provider: BaseProvider, answer_text: str, entities: list[dict],
             depth = "mentioned"
         evidence = str(item.get("evidence") or "")[:1000]
         review_status = "pending" if entity_status in ("ambiguous", "unknown") else "machine"
+        review_reason = "实体身份待确认" if review_status == "pending" else ""
         judge_status = "llm-judge"
         if mentioned and (not evidence or evidence not in answer_text):
             evidence = evidence_for(answer_text, entity)
             review_status = "pending"
+            review_reason = "推荐深度待确认" if depth == "recommended" else "证据不可逐字回查"
             judge_status = "llm-judge-evidence-fallback"
         citation_urls = [url for url in item.get("citation_urls", []) if url in source_urls]
         if mentioned and entity_status == "confirmed" and not evidence:
@@ -92,7 +100,7 @@ def judge_answer(provider: BaseProvider, answer_text: str, entities: list[dict],
             "mentioned": int(mentioned), "depth": depth, "sentiment": sentiment,
             "top_choice": int(bool(item.get("top_choice")) and depth == "recommended" and sentiment != "negative"),
             "evidence": evidence, "citation_urls": citation_urls, "judge_status": judge_status,
-            "review_status": review_status,
+            "review_status": review_status, "review_reason": review_reason,
         })
     discovered = []
     for item in parsed.get("discovered_entities", []):

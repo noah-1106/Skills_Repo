@@ -1,5 +1,73 @@
 # Changelog
 
+## 2.5.0 — 2026-11-10
+
+### 跑前配置校验
+
+- 新增应用 v2.5.0 与 schema v7；001–006 checksum 不变，旧 Wave、Observation、报告 JSON/HTML/hash 不回写。新增服务端测量准备单，在执行前汇总 Judge 方式、冻结参数、回答/Search/Judge 调用数、费用、历史健康、历史耗时和截断风险。
+- 历史耗时要求对应操作至少 3 条成功记录，按逐引擎串行和历史中位数/P90 启发式估算；样本不足、Consumer Web 和真实模型无历史时明确显示未知，不承诺固定分钟数，也不建立题型到 token 的写死映射。准备单不会自动执行付费健康检查。
+- 真实 Provider Run 关闭 Judge 时，创建 Run 必须由 admin 显式 `confirm_judge_disabled=true` 并留下审计；Wave 草稿仍可保存，该确认不绕过跑后的报告质量闸门。
+
+### Judge-only 补判与质量闸门
+
+- 新增 `judge_batches`、`judge_batch_items` 和可空 `call_attempts.judge_batch_id`。补判关联已有 Run/Answer，支持全量或逐题选择、独立预算、取消、恢复和明确失败重试；answer/search 调用与预估均为 0，不创建新 Wave 或回答 Run。
+- 只接受 raw 存在、hash 可验证、采集证据完整的有效 Answer。raw purged、hash 不符、截断、无效或未提交 Consumer Web 样本返回排除原因，不能靠补判变成有效样本或零提及。
+- 补判只追加当前最大 Observation revision + 1，保留原文、Answer、旧 revision 和 Citation；`judge_meta` 记录批次、配置/实际模型和 raw hash。原 Run 的 Judge 调用不伪填 batch ID。
+- 进程恢复只继续未开始项；在途项标为 `interrupted_unknown`，不自动重放可能已计费或已返回的真实请求。取消保留外部调用台账，但不把取消时的在途结果静默写成正式判定。只有 `outcome_unknown=0` 的明确失败项可重试。
+- 新增派生质量摘要与 effective Judge lineage，统一呈现执行状态、补判覆盖、fallback、pending/provisional、人工 revision、配置/实际模型和交付阻断。全量同配置补判可形成一致口径；部分覆盖、配置混合或活跃批次阻断相应报告审批和严格比较。
+- `rules-fallback` 与 `llm-judge-evidence-fallback` 的 recommended 必须 pending，负面推荐继续降级。报告 gate 阻止未复核推荐进入已批准客户结论；小样本仍可带限制交付，不宣称逐字证据校验能解决全部语义假阳性。
+
+### 交付交接、报告与来源管理
+
+- 新增只读 `GET /api/projects/{project}/runs/{run}/handoff`，提供稳定 project/wave/run/report/opportunity ID、质量摘要、readiness、唯一下一步、报告审批和工时状态。机会发现区分“未检查”和“已检查为 0”；旧报告仍有质量阻断时指向创建新版本。
+- 测量页把准备单、当前质量和唯一下一步放在首层，补判参数与历史记录渐进披露；机会、报告、工时和 Wave 收尾按钮连接到真实工作流，只读角色不显示无权执行的操作。
+- 新报告快照增加质量摘要、effective Judge protocol、JudgeBatch、配置/实际回答与 Judge 模型，以及版本化指标公式、分子、分母、聚合单元、权重和限制附录。客户版继续递归移除 system prompt、内部成本、原始证据和 secret reference。
+- 系统管理新增 `projects.settings.source_domains` 表格编辑，支持 hostname/IDNA 规范化和八类来源；只默认影响之后写入的 Citation，不静默重分类历史来源或旧报告。工时只提醒人工登记，不自动计时、写外部业务孪生或外发报告。
+- 项目导出包含 JudgeBatch 和逐项状态，沿用递归 secret scrub；嵌套 `secret_ref` 保持既有清空值合同。薄 CLI 新增 `judge-batch list/create/get/cancel/retry` 与 `run handoff`。
+
+### 验证与边界
+
+- 完整 pytest 为 **155 passed，1 warning**，包含 16 条已有回答只补 Judge、48 条新增 Observation revision、raw/hash/Web 排除、预算/权限/取消/恢复、populated v6→v7、导出脱敏、严格比较、报告闸门和完整 handoff。
+- 七套真实 Chrome 均通过：八工作流、执行治理、Intervention、人工 Consumer Web、模型执行、授权 Web Collector，以及新的准备单→补判→人工 revision→正式 Run→机会→报告审批→handoff→工时提醒→Wave 收尾。新路径覆盖 1440/768/390、键盘焦点、正确路由和零外部请求。
+- Python compile、全部前端 ESM、`git diff --check` 和 ECharts vendor integrity 通过。离线黄金集 12/12，通过实体、深度、情感、来源类型和 citation 合同回归；它不是生产 LLM 准确率证明。
+- 本轮自动化只使用 Demo/mock 和本地模拟页面，不执行真实付费 Provider、真实网页登录、自动报告外发或外部业务同步。未自动提交、推送、合并或同步 Skills_Repo。
+
+## 2.4.0 — 2026-11-09
+
+### Intervention 证据闭环
+
+- 新增 schema v6 与应用 v2.4.0，001–005 checksum 不变。以现有 Action 作为 Intervention cohort，新增 `content_briefs`、`action_assets`、`asset_publications`、`action_remeasurement_rounds`，ExternalEvent/Schedule 可关联对应对象，不新建平行 Intervention 或 timeline 表。
+- Action 创建时生成默认 Brief/Asset 草稿。Brief 主张必须为该 Opportunity 基线范围内的 Answer/Observation revision/Citation ref，否则显式 `pending`；跨项目、错误父子关系和 hash 不匹配均拒绝。pending 阻止 Brief/Asset/Action 审批，审批版本不可覆盖，修改创建新版本。
+- Asset 与 Publication 分离。一个 cohort 可有多个资产，一个资产可登记多个真实渠道 URL、媒体、含时区时间、商业关系和成本；未知成本为 NULL，填写成本必须有币种。Publication 不可变，首条才兼容投影旧 `actions.published_*`；旧单发布/单轮复测 API 保留。
+- D7/D14/D28 每轮使用独立 target Wave，创建时固定 baseline official Run，评估时固定 target official Run，保存完整 comparison/hash、成功标准、理由和 Answer/Observation/Citation refs。后续更换 official Run 不改写冻结评估。
+- 复测状态区分待测量、已有测量、证据不足、不可比和历史不可用；`attribution_status=not_attributable`。小样本/完整度不足不能输出改善，同期多资产不计算 per-asset delta，已结束 cohort 不重开。
+- Provider 调度只创建 Run；Consumer Web 只以 `remeasurement-round:{id}` 去重提醒，不创建 Schedule/Run、不触发 BrowserWorker。通用 schedule API 拒绝带 `action_id` 的复测旁路。
+- populated v5→v6 保守回填 legacy Brief/Asset/Publication/Round，保留 Answer/raw hash、旧事件 anchor 和旧报告 JSON/HTML/hash，不伪造 baseline Run 或 comparison；重复迁移不重复回填。
+
+### 工作台、报告与权限
+
+- 新增独立“常见概念”页，按业务、测量证据、优化交付和技术参数提供中英文对照与项目内解释；所有角色可读，不批量改写既有工作流、API 字段或历史报告。
+- 新增 Intervention drawer 和 `#/opportunities?tab=actions&action=<id>` 深链。首层呈现当前状态、最新 cohort 观察、非因果边界和一个主操作；Brief、资产、发布、复测和技术时间线分层展开，支持 1440/768/390、焦点闭环、Escape 和当前阶段恢复。
+- 报告快照升级为 schema v2，使用独立 `report_v2.html`，首屏回答“哪些关键问题不推荐我们、改了什么/发到哪里、之后观察到什么及证据强度”，并给唯一下一轮建议。旧 v1 快照仍走原模板，JSON/HTML/hash 不变。
+- 客户版、reviewer/viewer 不读取内部成本、Publication 备注、原始回答、Brief/Round 内部 evidence refs 或 Opportunity 原始 evidence/score JSON。Intervention 列表、详情、Brief/Asset/Publication/Round、导出和 HTTP 薄 CLI 已接通。
+- retention 后冻结 refs/comparison/hash 不变，Answer ref 标 `raw_purged`；新表进入项目导出并沿用递归 secret scrub/checksum。
+
+### 健康检查配置修正
+
+- 空 `health_defaults` 不再注入 `temperature=0/max_tokens=8`，而是省略这两个请求字段并使用厂商默认值，避免截断推理模型或向只允许特定温度的模型发送不兼容参数。answer/Judge/health 继续独立解析，显式 health 配置优先。
+- 健康检查省略输出上限时，预估复用引擎的“预估输出 tokens”，不再按 8 tokens 低估；管理界面明确展示不发送语义和参数隔离边界。
+- 移除 answer/Judge/Wave override 的 8000 tokens 应用硬上限；新回答默认调整为 65536，Judge 保持 1800，管理员和 Agent 可按模型修改，声明的模型输出上限仍逐引擎校验。旧协议兼容回退和历史 Wave 不变。
+- Kimi Chat 使用厂商当前 `max_completion_tokens` 字段，DeepSeek/普通 OpenAI-compatible 保持 `max_tokens`；调用台账继续以统一的 `max_tokens` 名称记录有效预算。
+
+### 验证与边界
+
+- 完整 pytest 为 137 项通过；新增 populated migration、多个资产/渠道、固定 Run/comparison、Consumer Web 提醒、跨项目证据隔离、小样本/不可比、retention、只读角色和大输出预算专项。
+- 独立真实 Chrome Intervention 验收通过：pending 阻断、2 个资产、2 条发布、D7/D14/D28、冻结评估、三问报告、HTML/PDF、深链刷新、焦点/Escape、viewer/reviewer、1440/768/390，外部请求为 0。
+- 六套真实 Chrome 均通过：八工作流、执行治理、人工 Consumer Web、模型执行/独立 Judge、两个授权 Web Driver，以及 Intervention 证据链。前端 ESM 与 Python compile 通过。
+- 离线黄金集 12/12、2700 次 DemoProvider 压力、ECharts vendor 完整性和 `pip-audit` 通过；压力无重复样本/revision、恢复重复 Provider 调用或外部网络调用。新增变更的凭据模式扫描无发现；本机未安装 gitleaks，CI 保留完整仓库扫描。
+- 开发库先创建带 manifest 的 v5 一致性备份，再迁移至 v6；两次迁移前备份的 SHA-256 一致，`integrity_check=ok`，外键检查无违规。v2.4 预览已恢复，worker/BrowserWorker 禁用以避免自动外部调用。
+- 本轮只使用 Demo/离线夹具，不执行真实付费 Provider 或真实网页调用；DeepSeek Web/Kimi Web 真实平台 live 边界不变。未自动提交、推送或同步 Skills_Repo。
+
 ## 2.3.0 — 2026-11-08
 
 ### 授权 Consumer Web Collector

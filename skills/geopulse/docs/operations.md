@@ -54,7 +54,9 @@ export GEOPULSE_WORKERS=4
 curl --fail http://127.0.0.1:8700/api/health
 ```
 
-响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。健康检查使用引擎自己的 health 有效参数，不再固定 temperature=0/max_tokens=8。Search 和 Chat 健康调用会进入统一调用台账，同时保留业务分组 `kind=health` 与实际计费操作 `operation=search/answer`，因此运营成本和用量汇总不会漏掉健康检查。
+响应包含程序和 schema 版本。引擎健康检查与存活检查不同：非 demo 引擎会向厂商发起真实请求，可能收费，API 必须带 `{"confirm":true}`，UI 会再次确认。健康检查使用独立的 health 有效参数，不继承 answer/Judge；未配置 `health_defaults.temperature` 或 `max_tokens` 时不发送对应字段，由厂商使用自身默认值，不再注入 `temperature=0/max_tokens=8`。省略 `max_tokens` 时，token/金额预估使用价格配置中的“预估输出 tokens”，仍是启发式预估而非费用上限；需要限制探针输出时应显式配置 health `max_tokens`。Search 和 Chat 健康调用会进入统一调用台账，同时保留业务分组 `kind=health` 与实际计费操作 `operation=search/answer`，因此运营成本和用量汇总不会漏掉健康检查。
+
+新回答测量默认 `max_tokens=65536`，Judge 默认 1800；管理员和 Agent 可在引擎默认值或 Wave override 中修改，不再受应用统一的 8000 上限限制。引擎声明的 `capabilities.max_output_tokens` 是提前校验依据；未声明时不按模型名猜测，由厂商执行其真实限制。Kimi 使用 `max_completion_tokens` 发送该预算，其他 OpenAI-compatible Provider 使用 `max_tokens`。大输出预算会增加费用和耗时，且推理可能与正文共享预算；它不会改写已冻结 Wave，需要为修改后的参数创建新 Wave。
 
 真实 smoke 执行前逐项确认：
 
@@ -73,6 +75,8 @@ CI、pytest、浏览器 smoke/governance/manual-web/model-execution/web-collecto
 
 - 进程重启恢复 queued/running/judging。
 - 已有原文的样本只恢复 Judge，不重复 Provider 请求。
+- JudgeBatch 只处理已有 Answer，不创建新 Run，也不产生 answer/search 调用。真实补判创建和明确失败重试分别需要即时确认，使用 `judge-batch:{id}` 独立预算预留；取消、完成或失败后释放。
+- 进程恢复时，未开始的补判项继续；在途 `running` 项标为 `interrupted_unknown`，不自动重放。只有 `outcome_unknown=0` 的明确失败项可重试。取消时在途结果保留调用台账，但不追加正式 Observation revision。
 - 可安全重试错误最多按 Wave 协议自动重试；超时等结果不明错误需管理员重试。
 - 活跃 Run 未结束时，调度器不会为同一 Wave 重复入队。
 - Consumer Web 不能创建自动调度；人工与授权浏览器 Run 都只能由内部成员在测量页显式创建。授权浏览器还需要 `confirm_browser=true` 和对应目标/Driver 的 active 本机会话。
@@ -84,7 +88,18 @@ CI、pytest、浏览器 smoke/governance/manual-web/model-execution/web-collecto
 - 周期任务每次只执行一次到期测量，再推进到未来，不在停机后突发补跑全部过期周期。
 - 调度认领、Run 创建、预算预留和下次时间推进位于同一可回滚事务内；失败保留诊断状态并生成告警。
 - 调度遇到软预算确认、硬预算或未知成本时进入 `blocked`，不会代替管理员确认超限。处理价格/额度后使用“处理后再试”。
-- Action 的“安排复测”会创建真实 Schedule；“确认改善”要求另一轮 Wave 的正式 Run 和严格同口径比较，不能用来源基线自我复测。
+- Intervention 的 Provider 复测节点从首条真实 Publication 计算 D7/D14/D28，调度只创建 Run，不自动指定正式 Run 或评估；Consumer Web 节点只生成去重提醒，不创建 Schedule/Run，也不触发 BrowserWorker。
+- 通用 `/schedules` 不接受带 `action_id` 的独立复测旁路；必须通过 `/actions/{id}/remeasurements` 创建，避免第二套复测事实来源。
+- “确认改善”要求另一轮 Wave 的正式 Run 和严格同口径比较，不能用来源基线自我复测；小样本、完整度不足和不可比只能保留证据不足/不可比状态。
+
+### Judge 漏配与交付恢复
+
+1. 在测量准备单核对 Judge、有效参数、调用数、费用、历史健康和截断风险。无足够历史时耗时显示未知；准备单不会自动执行付费健康检查。
+2. 真实 Provider 关闭 Judge 时，admin 创建 Run 必须显式确认并留下审计；该确认不代表质量通过。
+3. Run 结束后按交接面板处理失败样本、补判和人工复核。补判只接受 raw/hash 和采集证据完整的有效 Answer，raw purged、hash 不符、截断或未提交网页样本不能靠补判修复。
+4. 全量同配置补判形成一致 effective Judge 口径；部分覆盖、不同配置或活跃批次不能通过报告审批或输出严格比较 delta。
+5. fallback/provisional 推荐必须人工 revision。逐字证据不等于语义支持推荐，发现假阳性时追加人工修订，不改原文或旧 revision。
+6. 指定正式 Run、执行机会检查、创建平台报告并完成审批。旧报告有阻断时创建新版本，不能审批旧快照。`GET /runs/{id}/handoff` 提供唯一下一步；GeoPulse 不写外部业务孪生、不自动外发，也不自动登记工时。
 
 ### 预算执行语义
 
@@ -164,7 +179,9 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py migrate
 ```
 
-当前 schema 为 v5，`PRAGMA user_version=5`。迁移按 `001_v2.sql`、`002_execution_governance.sql`、`003_manual_consumer_web.sql`、`004_model_execution_search.sql`、`005_authorized_browser_collector.sql` 顺序执行并记录 checksum。v5 新增本机浏览器会话元数据、自动采集阶段/lease/恢复字段和 `browser_page` 引用；不保存 Cookie、密码或 profile 内容。populated v4→v5 测试保留 answer 原文、collection/citation ID、origin/title、证据 BLOB、外键和完整性，历史 collection 默认 `manual`。程序拒绝静默打开未知旧版本或更新版本。迁移前会自动创建带 manifest 的一致性备份；本版本不迁移旧 v1 回答数据。
+当前 schema 为 v7，`PRAGMA user_version=7`。迁移按 `001_v2.sql`、`002_execution_governance.sql`、`003_manual_consumer_web.sql`、`004_model_execution_search.sql`、`005_authorized_browser_collector.sql`、`006_intervention_evidence.sql`、`007_judge_quality_delivery.sql` 顺序执行并记录 checksum。v6 新增 Intervention 证据链表；v7 新增 `judge_batches`、`judge_batch_items` 和可空 `call_attempts.judge_batch_id`，001–006 checksum 不变。
+
+populated v5→v6 保留 Answer ID、原文/raw hash、旧报告 JSON/HTML/hash、外键和完整性。旧 Action 只获得 `legacy` Brief；有真实发布的旧 Action 回填 legacy Asset/Publication，成本保持 NULL；已有 ExternalEvent 只关联不复制；旧 Action schedule 回填 `legacy_unavailable` round 并保留 anchor，不伪造 baseline Run 或 comparison。populated v6→v7 不回写 Answer、Observation 或旧报告 JSON/HTML/hash，只增加补判表和调用关联。重复执行 migrate 不重复回填。程序拒绝静默打开未知旧版本或更新版本。迁移前会自动创建带 manifest 的一致性备份；本版本不迁移旧 v1 回答数据。
 
 ## 8. 项目导出与删除
 
@@ -173,13 +190,13 @@ export GEOPULSE_BACKUP_DIR=/srv/geopulse/recovery-drill/backups
 .venv/bin/python scripts/geopulse_ctl.py delete-project 1 --confirm '完整项目名'
 ```
 
-导出包含 schema、项目业务表、导出时间和 SHA-256，不含 secret store、`browser_sessions`、profile reference、lease owner 或浏览器 session 内部 ID。导出合同为 `geopulse-project-v2`；Consumer Web 附件 content 以 `{"encoding":"base64","data":"…"}` 表示，恢复或离线校验时必须按编码还原，不能把 base64 文本当作截图 bytes。删除会级联删除该项目业务数据；已有备份不会被自动删除，需按保留策略处理。UI 删除要求输入完整项目名。
+导出包含 schema、项目业务表（含 Brief、Asset、Publication、RemeasurementRound、JudgeBatch 和逐项状态）、导出时间和 SHA-256，不含 secret store、`browser_sessions`、profile reference、lease owner 或浏览器 session 内部 ID。嵌套执行快照中的 secret reference 递归清空。导出合同为 `geopulse-project-v2`；Consumer Web 附件 content 以 `{"encoding":"base64","data":"…"}` 表示，恢复或离线校验时必须按编码还原，不能把 base64 文本当作截图 bytes。删除会级联删除该项目业务数据；已有备份不会被自动删除，需按保留策略处理。UI 删除要求输入完整项目名。
 
 ## 9. 原文保留与清理
 
 `retention_days` 留空或为 0 时不自动清理。管理员显式配置后，维护任务按项目隔离处理到期原文；UI 可先预览 cutoff 和候选数，再确认执行并记录审计。
 
-清理只移除原始回答正文与敏感载荷，保留 `valid_sample`、observation、usage、状态和聚合所需元数据，并留下原文 tombstone。Consumer Web 同时清理草稿、页面引用卡片文本和附件 BLOB，授权浏览器还清理 conversation URL 与阶段详情，保留 raw hash、附件 hash/size 与 tombstone，并返回 `attachment_purged_count`。历史指标不会因正文为空而被改成零提及；清理后禁止新增依赖原文的 revision。旧报告快照保持不变，但包含已清理证据的新报告不能通过原文或人工证据发布闸门。
+清理只移除原始回答正文与敏感载荷，保留 `valid_sample`、observation、usage、状态和聚合所需元数据，并留下原文 tombstone。Consumer Web 同时清理草稿、页面引用卡片文本和附件 BLOB，授权浏览器还清理 conversation URL 与阶段详情，保留 raw hash、附件 hash/size 与 tombstone，并返回 `attachment_purged_count`。历史指标不会因正文为空而被改成零提及；清理后禁止新增依赖原文的 revision。Brief/Asset/Round 的冻结 evidence refs 与 comparison/hash 不改写，读取时标为 `raw_purged`。旧报告快照保持不变，但包含已清理证据的新报告不能通过原文或人工证据发布闸门。
 
 ## 10. 日志、成本与告警
 
@@ -201,7 +218,10 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 | 403 CSRF | 页面令牌过期 | 刷新并重新登录 |
 | Run 全部失败 | 引擎错误类型、模型、Base URL、账号额度 | 修正配置后由管理员明确重试 |
 | Search 失败 | Search operation 与错误前缀 | 不用 memory 补位，检查检索权限与协议 |
-| Judge 降级 | `judge_fallback_rate`、JSON/证据错误 | 复核 pending 样本，黄金集通过后再升级 Judge |
+| Judge 降级 | `judge_fallback_rate`、JSON/证据错误 | 复核 pending 样本；需要时创建 JudgeBatch，黄金集通过后再升级 Judge |
+| 补判项被排除 | 逐题 `raw_purged/raw_hash_mismatch/answer_not_valid/collection_evidence_incomplete` | 不补造原文或证据；修正采集后使用新测量，不能靠补判把无效样本变有效 |
+| 补判 `interrupted_unknown` | 进程恢复时的在途项与厂商台账 | 不自动重放；人工核对厂商结果，必要时另建受控批次 |
+| 报告仍被旧 gates 阻断 | handoff 的报告版本和质量摘要 | 创建新报告版本冻结当前事实，不审批旧快照 |
 | 调度 blocked | 告警详情中的预算或执行错误 | 软预算不能自动确认；补齐价格/调整额度后“处理后再试” |
 | 浏览器会话 pending/expired | 本机 BrowserWorker、可见浏览器、登录/验证码、`last_error` | 用户本人完成登录和验证码，再点击验证；不要提交 Cookie 或密码 |
 | 自动采集 awaiting_user | 当前 prompt、session 状态和心跳 | 先重新验证会话，再恢复当前任务；同 session 后续任务保持暂停 |
@@ -220,4 +240,4 @@ HTTP 结构化日志包含 request ID、方法、路径、状态和延迟。业�
 .venv/bin/python -m pytest -q
 ```
 
-CI 还执行前端 ESM、五套真实浏览器、黄金集、模拟压力和 secret scanning。HTTP 薄业务 CLI 的认证、确认和文件校验见 [cli.md](cli.md)。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。
+CI 还执行前端 ESM、七套真实浏览器、黄金集、模拟压力和 secret scanning。HTTP 薄业务 CLI 的认证、确认和文件校验见 [cli.md](cli.md)。更新 ECharts 时必须同步版本、来源、许可证和 SHA-256，不要无记录替换 minified 文件。

@@ -266,10 +266,15 @@ def _create_run(conn, project: dict, wave: dict, actor: int | None,
 
 def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
                          confirmation_reason: str, allow_manual: bool = False,
-                         confirm_browser: bool = False) -> dict:
+                         confirm_browser: bool = False, confirm_judge_disabled: bool = False) -> dict:
     protocol = loads(wave["protocol_json"], {})
     if protocol.get("measurement_target") == "consumer_web" and not allow_manual:
         raise HTTPException(409, "Consumer Web 只能由用户显式创建采集 Run，调度器不会自动操作网页")
+    real_provider = (protocol.get("measurement_target") == "provider_api"
+                     and any(item.get("kind") != "demo" for item in protocol.get("engine_signature") or []))
+    if real_provider and protocol.get("judge_mode") == "disabled" and not confirm_judge_disabled:
+        raise HTTPException(409, detail={"code": "judge_disabled_confirmation_required",
+                                        "message": "真实 Provider Run 已关闭 Judge；管理员必须确认本次只执行回答、后续需要补判或人工质检"})
     collection = protocol.get("collection_protocol") or {}
     browser_session_id = None
     if collection.get("collection_method") == "browser_assisted":
@@ -289,6 +294,9 @@ def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
                                 confirmation_reason=confirmation_reason)
     run = _create_run(conn, project, wave, actor, browser_session_id)
     reserve(conn, project, decision, wave=wave, run_id=run["id"], actor=actor)
+    if real_provider and protocol.get("judge_mode") == "disabled":
+        audit(conn, actor, project, "run", run["id"], "confirm_judge_disabled", None,
+              {"wave_id": wave["id"], "judge_mode": "disabled", "requires_post_run_quality_review": True})
     if decision.get("override_reason"):
         audit(conn, actor, project, "run", run["id"], "budget_override", None,
               {"reason": decision["override_reason"], "limits": decision["limits"]})
@@ -297,13 +305,13 @@ def _create_budgeted_run(conn, project: dict, wave: dict, actor: int | None,
 
 def create_run(project: dict, wave: dict, actor: int | None, conn=None,
                confirmation_reason: str = "", allow_manual: bool = False,
-               confirm_browser: bool = False) -> dict:
+               confirm_browser: bool = False, confirm_judge_disabled: bool = False) -> dict:
     if conn is not None:
         return _create_budgeted_run(conn, project, wave, actor, confirmation_reason, allow_manual,
-                                    confirm_browser)
+                                    confirm_browser, confirm_judge_disabled)
     with transaction() as owned:
         return _create_budgeted_run(owned, project, wave, actor, confirmation_reason, allow_manual,
-                                    confirm_browser)
+                                    confirm_browser, confirm_judge_disabled)
 
 
 def run_progress(conn, run_id: int) -> dict:
@@ -338,7 +346,7 @@ def run_progress(conn, run_id: int) -> dict:
 
 
 def _record_operations(conn, answer: dict, operations: list[dict], failure: dict | None = None,
-                       engine: dict | None = None) -> dict:
+                       engine: dict | None = None, judge_batch_id: int | None = None) -> dict:
     aggregate = Counter()
     project = {"id": answer["project_id"], "client_id": answer["client_id"]}
     recording_engine = engine or answer["engine"]
@@ -347,12 +355,14 @@ def _record_operations(conn, answer: dict, operations: list[dict], failure: dict
         usage = operation.get("usage") or {}
         for key in ("prompt_tokens", "completion_tokens", "search_calls"):
             aggregate[key] += int(usage.get(key) or 0)
-        record_attempt(conn, project=project, engine=recording_engine, operation=operation, answer=answer)
+        record_attempt(conn, project=project, engine=recording_engine, operation=operation, answer=answer,
+                       judge_batch_id=judge_batch_id)
         if operation.get("status") == "failed":
             recorded_failures.add(operation["kind"])
     if failure and failure.get("kind", "answer") not in recorded_failures:
         record_attempt(conn, project=project, engine=recording_engine, answer=answer,
-                       operation={**failure, "kind": failure.get("kind", "answer"), "status": "failed"})
+                       operation={**failure, "kind": failure.get("kind", "answer"), "status": "failed"},
+                       judge_batch_id=judge_batch_id)
     return dict(aggregate)
 
 
@@ -399,18 +409,29 @@ def _insert_discovered(conn, answer: dict, discovered: list[dict], actor: int | 
         existing.add(item["name"].casefold())
 
 
-def _store_observations(conn, answer: dict, observations: list[dict], actor: int | None = None) -> list[dict]:
+def _store_observations(conn, answer: dict, observations: list[dict], actor: int | None = None,
+                        *, append: bool = False, judge_batch_id: int | None = None,
+                        judge_batch_item_id: int | None = None) -> list[dict]:
     stored = []
     for observation in observations:
-        cursor = conn.execute("INSERT OR IGNORE INTO observations(client_id,project_id,answer_id,brand_entity_id,revision,entity_status,mentioned,depth,sentiment,top_choice,evidence,citation_urls_json,discovered_json,judge_status,judge_meta_json,review_status,review_reason,reviewer_id,created_at) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        revision = 1
+        if append:
+            revision = (one(conn, "SELECT MAX(revision) AS value FROM observations WHERE answer_id=? AND brand_entity_id=?",
+                            (answer["id"], observation["brand_entity_id"]))["value"] or 0) + 1
+        meta = {**(observation.get("judge_meta") or {})}
+        if judge_batch_id is not None:
+            meta.update({"judge_batch_id": judge_batch_id, "judge_batch_item_id": judge_batch_item_id,
+                         "answer_raw_sha256": answer.get("raw_text_sha256") or ""})
+        verb = "INSERT" if append else "INSERT OR IGNORE"
+        cursor = conn.execute(f"{verb} INTO observations(client_id,project_id,answer_id,brand_entity_id,revision,entity_status,mentioned,depth,sentiment,top_choice,evidence,citation_urls_json,discovered_json,judge_status,judge_meta_json,review_status,review_reason,reviewer_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                               (answer["client_id"], answer["project_id"], answer["id"], observation["brand_entity_id"],
-                               observation["entity_status"], observation.get("mentioned", 0), observation.get("depth", "absent"),
+                               revision, observation["entity_status"], observation.get("mentioned", 0), observation.get("depth", "absent"),
                                observation.get("sentiment", "unknown"), observation.get("top_choice", 0),
                                observation.get("evidence") or "", dumps(observation.get("citation_urls") or []),
                                dumps(observation.get("discovered") or []), observation.get("judge_status") or "unknown",
-                               dumps(observation.get("judge_meta") or {}), observation.get("review_status") or "machine",
+                               dumps(meta), observation.get("review_status") or "machine",
                                observation.get("review_reason") or "", actor, utc_now()))
-        stored.append({**observation, "db_id": cursor.lastrowid})
+        stored.append({**observation, "db_id": cursor.lastrowid, "revision": revision, "judge_meta": meta})
     return stored
 
 
@@ -471,6 +492,12 @@ def _finalize_run(conn, run_id: int) -> None:
     if status in ("partial", "failed"):
         conn.execute("INSERT INTO alerts(client_id,project_id,wave_id,kind,severity,message,created_at) SELECT client_id,project_id,wave_id,'run_incomplete','warning',?,? FROM runs WHERE id=?",
                      (f"Run {run_id} 状态为 {status}，请检查失败样本；缺失不计为零提及。", utc_now(), run_id))
+    if status in ("done", "partial"):
+        conn.execute("""INSERT INTO alerts(client_id,project_id,wave_id,kind,severity,message,dedupe_key,created_at,updated_at)
+            SELECT client_id,project_id,wave_id,'quality_review','warning',?,?,?,? FROM runs WHERE id=?
+              AND NOT EXISTS (SELECT 1 FROM alerts WHERE project_id=? AND dedupe_key=? AND status='open')""",
+                     (f"Run {run_id} 执行结束；请完成判定质检并指定正式 Run 后再交付。",
+                      f"run-quality:{run_id}", utc_now(), utc_now(), run_id, run["project_id"], f"run-quality:{run_id}"))
 
 
 def process_answer(answer_id: int) -> None:
@@ -604,6 +631,8 @@ class Worker:
             idle_runs = all_rows(conn, "SELECT id FROM runs r WHERE status IN ('queued','running') AND NOT EXISTS (SELECT 1 FROM answers a WHERE a.run_id=r.id AND a.status IN ('queued','running','judging','awaiting_collection'))")
             for run in idle_runs:
                 _finalize_run(conn, run["id"])
+        from .judge_batches import recover_judge_batches
+        recover_judge_batches()
 
     def start(self) -> None:
         if self.threads:
@@ -625,7 +654,16 @@ class Worker:
         while not self.stop_event.is_set():
             claimed = _claim_answer()
             if not claimed:
-                self.stop_event.wait(0.15)
+                from .judge_batches import claim_judge_item, process_judge_item
+                claimed = claim_judge_item()
+                if not claimed:
+                    self.stop_event.wait(0.15)
+                    continue
+                try:
+                    process_judge_item(claimed["id"])
+                except Exception:
+                    from .judge_batches import recover_judge_batches
+                    recover_judge_batches()
                 continue
             try:
                 process_answer(claimed["id"])

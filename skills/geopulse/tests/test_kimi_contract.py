@@ -50,6 +50,9 @@ def test_kimi_search_chat_contract_and_source_dedup(monkeypatch):
     chat_payload = json.loads(requests[1].data)
     assert "Kimi Search Basic" in chat_payload["messages"][1]["content"]
     assert chat_payload["model"] == "kimi-test"
+    assert chat_payload["max_completion_tokens"] == 300
+    assert "max_tokens" not in chat_payload
+    assert result.operations[1]["request_params"]["max_tokens"] == 300
     assert [item["url"] for item in result.citations] == ["https://example.com/a", "https://example.org/b"]
     assert [operation["kind"] for operation in result.operations] == ["search", "answer"]
     assert result.usage["search_calls"] == 1

@@ -69,6 +69,31 @@ def update_settings(project_id: int, payload: SettingsIn, request: Request):
     if set(payload.settings) - allowed:
         raise HTTPException(400, "包含不支持的设置字段")
     settings = {**loads(context["project"]["settings_json"], {}), **payload.settings}
+    if "source_domains" in payload.settings:
+        source_domains = payload.settings["source_domains"]
+        if not isinstance(source_domains, dict):
+            raise HTTPException(400, "来源域名设置必须是“域名 → 类别”对象")
+        normalized = {}
+        allowed_categories = {"官网", "百科", "UGC", "新闻", "行业", "研报", "投诉", "其他"}
+        for raw_domain, category in source_domains.items():
+            domain = str(raw_domain).strip().lower().rstrip(".")
+            if (not domain or any(char in domain for char in (":", "/", "@", "?", "#"))
+                    or any(char.isspace() for char in domain)):
+                raise HTTPException(400, f"来源域名必须是无协议、端口或路径的 hostname：{raw_domain}")
+            try:
+                domain = domain.encode("idna").decode("ascii")
+            except UnicodeError as error:
+                raise HTTPException(400, f"来源域名格式不正确：{raw_domain}") from error
+            if len(domain) > 253 or any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                                       or not all(char.isalnum() or char == "-" for char in label)
+                                       for label in domain.split(".")):
+                raise HTTPException(400, f"来源域名格式不正确：{raw_domain}")
+            if category not in allowed_categories:
+                raise HTTPException(400, f"来源类别必须是：{'、'.join(sorted(allowed_categories))}")
+            if domain in normalized:
+                raise HTTPException(400, f"规范化后来源域名重复：{domain}")
+            normalized[domain] = category
+        settings["source_domains"] = normalized
     budget = settings.get("budget") or {}
     if not isinstance(budget, dict):
         raise HTTPException(400, "预算设置格式不正确")

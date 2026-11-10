@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -9,10 +10,12 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..db import all_rows, dumps, loads, one, utc_now
 from ..engine.compare import compare_metrics
+from ..engine.metric_definitions import metric_appendix
 from ..engine.metrics import calculate_metrics, ratio
 from ..security import audit
 from .costs import summarize_costs
 from .measurement import load_run_samples
+from .quality import effective_protocol, run_quality
 from .state import transition
 
 TEMPLATES = Environment(loader=FileSystemLoader(str(Path(__file__).parent.parent / "templates")),
@@ -39,6 +42,7 @@ def wave_metrics(conn, wave: dict, allow_empty: bool = False) -> tuple[dict, dic
     samples, context = load_run_samples(conn, run)
     metrics = calculate_metrics(samples, context["primary_id"], loads(wave["stats_json"], {}))
     protocol = loads(run["snapshot_json"], {}).get("protocol") or context["protocol"]
+    protocol = effective_protocol(conn, run, protocol)
     return metrics, protocol, run
 
 
@@ -109,6 +113,99 @@ def _web_evidence(conn, samples: list[dict], protocol: dict) -> tuple[int, list[
     return issues, evidence
 
 
+def _report_interventions(conn, project: dict, wave_ids: list[int]) -> tuple[list[dict], list[dict], list[dict], dict]:
+    from .interventions import intervention_detail, publication_public, round_public
+
+    marks = ",".join("?" for _ in wave_ids)
+    actions = all_rows(conn, f"""SELECT DISTINCT a.* FROM actions a JOIN opportunities o ON o.id=a.opportunity_id
+        WHERE a.project_id=? AND (o.wave_id IN ({marks}) OR EXISTS(
+            SELECT 1 FROM action_remeasurement_rounds r WHERE r.action_id=a.id
+              AND (r.baseline_wave_id IN ({marks}) OR r.target_wave_id IN ({marks}))
+        )) ORDER BY a.id""", [project["id"], *wave_ids, *wave_ids, *wave_ids])
+    safe_items = []
+    internal_items = []
+    costs = []
+    summaries = []
+    for action in actions:
+        detail = intervention_detail(conn, action, "admin")
+        safe = {
+            "action": {key: action[key] for key in ("id", "title", "status", "geo_step")},
+            "opportunity": {key: detail["opportunity"].get(key) for key in ("id", "prompt_item_id", "prompt_text", "gap_type")},
+            "briefs": [{**row, "claims": [{"text": claim["text"], "status": claim["status"],
+                                            "evidence_count": len(claim.get("evidence_refs", []))}
+                                           for claim in row["claims"]]} for row in
+                       ({"version": item["version"], "status": item["status"], "claims": item["claims"]}
+                        for item in detail["briefs"])],
+            "assets": [{"id": item["id"], "title": item["title"], "version": item["version"], "status": item["status"],
+                        "facts": [{"text": fact["text"], "status": fact["status"],
+                                   "evidence_count": len(fact.get("evidence_refs", []))} for fact in item["facts"]]}
+                       for item in detail["assets"]],
+            "publications": [publication_public(row, False) for row in detail["publications"]],
+            "rounds": [round_public(row, False) for row in detail["rounds"]],
+            "timeline": detail["timeline"], "decision_summary": detail["decision_summary"],
+        }
+        safe_items.append(safe)
+        internal_items.append(detail)
+        summaries.append(detail["decision_summary"])
+        for publication in detail["publications"]:
+            costs.append({"publication_id": publication["id"], "action_id": action["id"], "cost": publication["cost"],
+                          "currency": publication["currency"], "relationship": publication["relationship"],
+                          "notes": publication["notes"]})
+    status_rank = {"draft": 0, "review": 0, "approved": 1, "published": 2, "remeasure_due": 3,
+                   "verified": 4, "not_effective": 4, "stopped": 4}
+    selected = min(safe_items, key=lambda item: (status_rank.get(item["action"]["status"], 9), item["action"]["id"]), default=None)
+    decision = {
+        "key_questions": [question for item in summaries for question in item["key_questions"]],
+        "changes": [{"action_id": item["action"]["id"], "title": item["action"]["title"],
+                     **item["decision_summary"]["changes"]} for item in safe_items],
+        "observations": [{"action_id": item["action"]["id"], "title": item["action"]["title"],
+                          "rounds": item["decision_summary"]["observations"]} for item in safe_items],
+        "next_recommendation": selected["decision_summary"]["next_recommendation"] if selected else "先确认机会并创建一个 Intervention cohort",
+        "causal_boundary": "同一 cohort 的同期变化不等于任何单篇内容或 GEO Action 的因果效果；不能排除模型换版、检索波动、竞品动作与样本噪声。",
+    }
+    return safe_items, internal_items, costs, decision
+
+
+def customer_snapshot(snapshot: dict) -> dict:
+    """Return the customer-safe representation without mutating the frozen internal snapshot."""
+    result = copy.deepcopy(snapshot)
+    if result.get("schema_version", 1) < 2:
+        result.pop("costs", None)
+        result.pop("internal_samples", None)
+        for wave in result.get("waves", []):
+            wave["protocol"] = _without_system_prompts(wave["protocol"])
+            wave.get("stats", {}).pop("budget", None)
+            wave.pop("collection_evidence", None)
+        return result
+    for key in ("costs", "internal_samples", "internal_interventions", "intervention_costs"):
+        result.pop(key, None)
+    for wave in result.get("waves", []):
+        wave["protocol"] = _without_system_prompts(wave["protocol"])
+        wave["quality"] = _without_system_prompts(wave.get("quality"))
+        wave.get("stats", {}).pop("budget", None)
+        wave.pop("collection_evidence", None)
+        for competitor in wave.get("metrics", {}).get("competitors", []):
+            competitor["evidence"] = []
+    for opportunity in result.get("opportunities", []):
+        evidence = opportunity.get("evidence", {})
+        opportunity["evidence"] = {"answer_ids": evidence.get("answer_ids", []),
+                                   "evidence_count": len(evidence.get("evidence", []))}
+        opportunity.pop("score_detail", None)
+    comparison = result.get("comparison") or {}
+    for side in ("baseline", "current"):
+        for competitor in (comparison.get(side) or {}).get("competitors", []):
+            competitor["evidence"] = []
+    return result
+
+
+def _without_system_prompts(value):
+    if isinstance(value, dict):
+        return {key: _without_system_prompts(item) for key, item in value.items() if key != "system_prompt"}
+    if isinstance(value, list):
+        return [_without_system_prompts(item) for item in value]
+    return value
+
+
 def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict:
     if not wave_ids or len(wave_ids) > 2:
         raise HTTPException(400, "报告需要一个诊断 wave 或 baseline+current 两个 wave")
@@ -134,6 +231,8 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
                                       if key not in ("protocol_json", "stats_json", "engine_snapshot_json", "judge_snapshot_json")},
                              "protocol": protocol, "stats": loads(wave["stats_json"], {}),
                              "run": ({"id": run["id"], "attempt_no": run["attempt_no"], "status": run["status"]} if run else None),
+                             "quality": run_quality(conn, run) if run else None,
+                             "metric_appendix": metric_appendix(public_metrics),
                              "metrics": public_metrics, "raw_evidence_purged": purged,
                              "evidence_issues": evidence_issues, "web_evidence_issues": web_evidence_issues,
                              "collection_evidence": collection_evidence})
@@ -165,11 +264,21 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
     for opportunity in opportunities:
         opportunity["evidence"] = loads(opportunity.pop("evidence_json"), {})
         opportunity["score_detail"] = loads(opportunity.pop("score_json"), {})
-    actions = all_rows(conn, f"SELECT * FROM actions WHERE project_id=? ORDER BY updated_at DESC", (project["id"],))
-    events = all_rows(conn, "SELECT * FROM external_events WHERE project_id=? ORDER BY event_at", (project["id"],))
+    intervention_items, internal_interventions, intervention_costs, decision_summary = _report_interventions(conn, project, wave_ids)
+    actions = [item["action"] for item in internal_interventions]
+    action_ids = [item["id"] for item in actions]
+    if action_ids:
+        action_marks = ",".join("?" for _ in action_ids)
+        events = all_rows(conn, f"SELECT * FROM external_events WHERE project_id=? AND action_id IN ({action_marks}) ORDER BY event_at",
+                          [project["id"], *action_ids])
+    else:
+        events = []
     latest = wave_payload[-1]["metrics"]
     if not latest["quality"]["valid_samples"]:
         diagnosis = "本周期无有效样本，无法诊断。请先检查引擎配置、失败样本和正式 run。"
+    elif wave_payload[-1].get("quality", {}).get("provisional_recommendations"):
+        diagnosis = (f"当前有 {wave_payload[-1]['quality']['provisional_recommendations']} 条推荐判定待复核，"
+                     "推荐相关计数均为 provisional；完成人工 revision 前不形成客户推荐诊断或审批结论。")
     elif comparison and not comparison.get("comparable"):
         diagnosis = comparison.get("reason") or "两次测量不可严格比较"
     else:
@@ -186,11 +295,13 @@ def build_snapshot(conn, project: dict, wave_ids: list[int], actor: int) -> dict
         if worst and worst["coverage"]["value"] < 100:
             diagnosis += f"覆盖率最低的已测维度为{dimension_labels.get(worst['key'], worst['key'])}（{worst['coverage']['hits']}/{worst['coverage']['n']}）。"
         diagnosis += "样本与口径限制见下文，不作策略因果断言。"
-    return {"schema_version": 1, "project": {"id": project["id"], "client_id": project["client_id"],
+    return {"schema_version": 2, "project": {"id": project["id"], "client_id": project["client_id"],
             "name": project["name"], "category": project["category"], "market": project["market"],
             "language": project["language"], "timezone": project["timezone"]},
             "waves": wave_payload, "comparison": comparison, "opportunities": opportunities,
-            "actions": actions, "external_events": events, "costs": _costs(conn, run_ids),
+            "actions": actions, "external_events": events, "interventions": intervention_items,
+            "internal_interventions": internal_interventions, "intervention_costs": intervention_costs,
+            "decision_summary": decision_summary, "costs": _costs(conn, run_ids),
             "source_structure": _source_structure(conn, run_ids), "internal_samples": internal_samples,
             "diagnosis": diagnosis, "generated_at": utc_now(), "generated_by": actor,
             "causal_boundary": "变化不等于策略因果；不能排除模型换版、检索波动、竞品动作与样本噪声。"}
@@ -227,6 +338,17 @@ def release_gates(snapshot: dict) -> list[str]:
             errors.append(f"{label}：仍有 {quality['pending_review_answers']} 条回答待人工复核")
         if quality["judge_fallback_rate"]["value"] > 20:
             errors.append(f"{label}：Judge 降级率超过 20%，需先复核判定质量")
+        derived = item.get("quality") or {}
+        if derived.get("active_judge_batches"):
+            errors.append(f"{label}：补判批次 {derived['active_judge_batches']} 仍在执行，不能交付半更新状态")
+        if derived.get("judge_lineage") == "mixed":
+            errors.append(f"{label}：Judge 补判覆盖或配置不一致，不能作为同一判定口径交付")
+        if derived.get("fallback_recommended_pending"):
+            errors.append(f"{label}：{derived['fallback_recommended_pending']} 条 fallback 推荐尚未人工复核")
+        if derived.get("provisional_recommendations"):
+            errors.append(f"{label}：{derived['provisional_recommendations']} 条推荐仍为 provisional，不能进入已批准客户结论")
+        if item.get("protocol", {}).get("judge_mode") == "disabled":
+            errors.append(f"{label}：尚未形成完整 Judge 补判口径")
         if len(metrics["measurement_modes"]) > 1:
             errors.append(f"{label}：memory/search 口径混合")
         if item.get("raw_evidence_purged"):
@@ -248,8 +370,9 @@ def release_gates(snapshot: dict) -> list[str]:
 
 
 def render_reports(snapshot: dict) -> tuple[str, str]:
-    template = TEMPLATES.get_template("report.html")
-    client = template.render(snapshot=snapshot, internal=False)
+    is_v2 = snapshot.get("schema_version", 1) >= 2
+    template = TEMPLATES.get_template("report_v2.html" if is_v2 else "report.html")
+    client = template.render(snapshot=customer_snapshot(snapshot) if is_v2 else snapshot, internal=False)
     internal = template.render(snapshot=snapshot, internal=True)
     return client, internal
 

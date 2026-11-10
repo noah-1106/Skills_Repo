@@ -7,7 +7,8 @@ REQUIRED_PROTOCOL = (
     "prompt_set_hash", "entity_version", "competitor_pool_hash", "engine_signature", "repeats",
     "answer_execution", "judge_execution", "judge_mode", "language", "market", "judge_version",
     "mode", "measurement_target", "valid_sample_definition", "stratum_weights",
-    "use_judge", "collection_protocol", "judge_signature",
+    "use_judge", "collection_protocol", "judge_signature", "effective_judge_status",
+    "effective_judge_coverage", "active_judge_batch_ids",
 )
 
 
@@ -15,6 +16,10 @@ def protocol_check(baseline: dict, current: dict) -> dict:
     baseline = canonical_protocol(baseline)
     current = canonical_protocol(current)
     mismatches = [key for key in REQUIRED_PROTOCOL if baseline.get(key) != current.get(key)]
+    for protocol in (baseline, current):
+        if protocol.get("effective_judge_status") == "mixed" or protocol.get("active_judge_batch_ids"):
+            if "effective_judge_lineage" not in mismatches:
+                mismatches.append("effective_judge_lineage")
     exploratory = baseline.get("reported_model_versions") != current.get("reported_model_versions")
     return {"comparable": not mismatches, "mismatches": mismatches,
             "exploratory": bool(exploratory) and not mismatches,
@@ -25,6 +30,10 @@ def compare_metrics(baseline: dict, current: dict, baseline_protocol: dict, curr
                     min_completeness: float = 0.90) -> dict:
     check = protocol_check(baseline_protocol, current_protocol)
     if not check["comparable"]:
+        reason = ("Judge 补判覆盖不完整、仍在执行或有效判定口径不一致，拒绝输出严格前后变化"
+                  if any(key.startswith("effective_judge") for key in check["mismatches"])
+                  else "两次测量口径不同，拒绝输出严格前后变化")
+        result = {**check, "reason": reason}
         before_collection = baseline_protocol.get("collection_protocol") or {}
         after_collection = current_protocol.get("collection_protocol") or {}
         cross_surface = (baseline_protocol.get("measurement_target") != current_protocol.get("measurement_target") or
@@ -34,7 +43,6 @@ def compare_metrics(baseline: dict, current: dict, baseline_protocol: dict, curr
                          before_collection.get("platform") != after_collection.get("platform") or
                          before_collection.get("collection_method") != after_collection.get("collection_method") or
                          before_collection.get("browser_driver") != after_collection.get("browser_driver"))
-        result = {**check, "reason": "两次测量口径不同，拒绝输出严格前后变化"}
         if cross_surface:
             result.update({"exploratory": True, "comparison_scope": "cross_surface",
                            "reason": "API/Web 或不同页面、会话上下文不能严格比较；以下仅为各自摘要，不生成 pp 或意图迁移。",

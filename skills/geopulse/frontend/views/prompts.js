@@ -1,14 +1,16 @@
 import { api } from "../api.js";
-import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, downloadJson, label } from "../components.js";
+import { h, clear, pageHead, section, dataTable, badge, drawer, field, input, select, textarea, checkbox, toast, formError, confirmDialog, downloadJson, label, formatDate, onSubmit } from "../components.js";
 
 const dimensions = { brand: "品牌词", scene: "场景词", compare: "对比词", choice: "选购词" };
 const refreshSet = (ctx, id) => String(ctx.params.get("set")) === String(id) ? ctx.refresh() : ctx.navigate("prompts", { set: id });
 
 export async function renderPrompts(root, ctx) {
+  const canEdit = ["admin", "analyst"].includes(ctx.role);
+  const canReview = ctx.role === "admin";
   const sets = (await api.get(`/api/projects/${ctx.project.id}/prompt-sets`)).items;
   if (!sets.length) {
-    clear(root); root.append(pageHead("问题集工作台", "先创建草稿，再生成或导入候选题。", [h("button", { class: "button", onClick: () => newSet(ctx) }, "新建问题集")]),
-      h("div", { class: "empty-state" }, h("h3", {}, "还没有问题集"), h("p", {}, "候选题必须逐条审核并满足四维配额，冻结后才能用于测量。")));
+    clear(root); root.append(pageHead("问题集工作台", canEdit ? "先创建草稿，再生成或导入候选题。" : "等待内部成员创建并冻结问题集。", canEdit ? [h("button", { class: "button", onClick: () => newSet(ctx) }, "新建问题集")] : []),
+      h("div", { class: "empty-state" }, h("h3", {}, "还没有问题集"), h("p", {}, canEdit ? "候选题必须逐条审核并满足四维配额，冻结后才能用于测量。" : "当前项目还没有可查看的问题集，请联系分析师或管理员。")));
     return;
   }
   const selectedId = Number(ctx.params.get("set")) || sets.find((item) => item.status === "draft")?.id || sets[0].id;
@@ -18,27 +20,32 @@ export async function renderPrompts(root, ctx) {
   const pending = activeItems.filter((item) => !["reviewed", "frozen"].includes(item.status)).length;
   const setSelector = select(sets.map((item) => ({ value: item.id, label: `v${item.version} · ${item.name} · ${label(item.status)}` })), current.id, { "aria-label": "选择问题集版本" });
   setSelector.addEventListener("change", () => ctx.navigate("prompts", { set: setSelector.value }));
-  const actions = [h("button", { class: "button secondary", onClick: () => newSet(ctx) }, "新建草稿")];
-  if (current.status === "draft") {
+  const actions = canEdit ? [h("button", { class: "button secondary", onClick: () => newSet(ctx) }, "新建草稿")] : [];
+  if (current.status === "draft" && canEdit) {
     actions.push(h("button", { class: "button secondary", onClick: () => scaffoldDialog(ctx, current) }, "生成候选题"));
     actions.push(h("button", { class: "button secondary", onClick: () => importDialog(ctx, current) }, "导入 JSON / CSV"));
-    actions.push(h("button", { class: "button", onClick: () => changeStatus(ctx, current, "reviewing") }, "进入审核"));
+    if (canReview) actions.push(h("button", { class: "button", onClick: () => changeStatus(ctx, current, "reviewing") }, "进入审核"));
   }
   if (current.status === "reviewing" && ctx.role === "admin") {
     const next = activeItems.find((item) => !["reviewed", "frozen"].includes(item.status));
     actions.push(next ? h("button", { class: "button", onClick: () => reviewDialog(ctx, current, next, "reviewed") }, `继续审核 · 还剩 ${pending} 条`)
       : h("button", { class: "button", onClick: () => changeStatus(ctx, current, "frozen") }, "冻结此版本"));
   }
-  if (current.status === "frozen") actions.push(h("button", { class: "button", onClick: async () => { const copy = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/copy`, {}); toast("已复制为新草稿"); refreshSet(ctx, copy.id); } }, "复制为新版本"));
+  if (current.status === "frozen" && canEdit) actions.push(h("button", { class: "button", onClick: async () => { const copy = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/copy`, {}); toast("已复制为新草稿"); refreshSet(ctx, copy.id); } }, "复制为新版本"));
+  const summaryTitle = current.status === "frozen" ? "这是不可变测量版本"
+    : current.status === "draft" ? (activeItems.length ? `${activeItems.length} 条候选题待进入审核` : "先添加候选题")
+      : pending ? `还有 ${pending} 条待审核` : "题目已完成逐条审核";
+  const summaryText = current.status === "frozen"
+    ? `冻结于 ${formatDate(current.frozen_at, ctx.project.timezone)} · 内容哈希 ${current.content_hash.slice(0, 12)}。如需修改，请复制新版本。`
+    : current.status === "draft"
+      ? activeItems.length ? "候选题已就绪。管理员可进入逐条审核；如需修改，仍可继续生成或导入。" : "先生成或导入候选题。导入内容请避免包含客户机密；可选择自动脱敏邮箱和手机号。"
+      : pending ? "管理员需要明确每条题目是否保留及其业务适用性。" : "可以冻结。冻结时会再次校验四维配额与未审核题目。";
   clear(root);
   root.append(pageHead("问题集工作台", "把自然问法归入同一业务意图；冻结后文本、分层与适用性不再修改。", actions));
   root.append(h("div", { class: "prompt-version-panel" }, h("div", { class: "prompt-version-grid" }, field("当前版本", setSelector),
-    h("div", { class: "prompt-version-summary" }, h("h2", {}, current.status === "frozen" ? "这是不可变测量版本" : pending ? `还有 ${pending} 条待审核` : "题目已完成逐条审核"),
-      h("p", { class: "muted" }, current.status === "frozen" ? `冻结于 ${current.frozen_at || "—"} · 内容哈希 ${current.content_hash.slice(0, 12)}。如需修改，请复制新版本。`
-        : current.status === "draft" ? "先添加候选题并进入审核。导入内容请避免包含客户机密；可选择自动脱敏邮箱和手机号。"
-        : pending ? "管理员需要明确每条题目是否保留及其业务适用性。" : "可以冻结。冻结时会再次校验四维配额与未审核题目。"))),
+    h("div", { class: "prompt-version-summary" }, h("h2", {}, summaryTitle), h("p", { class: "muted" }, summaryText)),
     h("dl", { class: "definition-list" }, Object.entries(dimensions).map(([key, name]) => h("div", {}, h("dt", {}, name), h("dd", {}, `${activeItems.filter((item) => item.dimension === key).length} 条`))),
-      h("div", {}, h("dt", {}, "发现 / 导航"), h("dd", {}, `${activeItems.filter((item) => item.query_type === "discovery").length} / ${activeItems.filter((item) => item.query_type === "navigation").length}`)))));
+      h("div", {}, h("dt", {}, "发现 / 导航"), h("dd", {}, `${activeItems.filter((item) => item.query_type === "discovery").length} / ${activeItems.filter((item) => item.query_type === "navigation").length}`))))));
 
   const rows = current.items.map((item) => [
     h("button", { class: "table-link", onClick: () => promptDetail(ctx, current, item) }, item.text),
@@ -84,10 +91,9 @@ function newSet(ctx) {
   const form = h("form", {}, field("问题集名称", name), h("p", { class: "muted" }, "创建后为草稿，不会自动用于测量。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "创建草稿")));
   const modal = drawer("新建问题集", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { const created = await api.post(`/api/projects/${ctx.project.id}/prompt-sets`, { name: name.value }); modal.close(); refreshSet(ctx, created.id); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    const created = await api.post(`/api/projects/${ctx.project.id}/prompt-sets`, { name: name.value });
+    modal.close(); refreshSet(ctx, created.id);
   });
 }
 
@@ -96,10 +102,9 @@ function reviewDialog(ctx, current, item, status) {
   const form = h("form", {}, h("p", {}, item.text), status !== "rejected" ? field("业务适用性", eligibility, "北极星只纳入高优先级且已确认适用的发现型意图") : h("p", { class: "muted" }, "排除后不会进入冻结版本。"),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, status === "reviewed" ? "确认通过" : status === "rejected" ? "确认排除" : "恢复为草稿")));
   const modal = drawer("审核 Prompt", form);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try { await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items/${item.id}/review`, { status, eligibility: status === "rejected" ? null : eligibility.value }); modal.close(); toast("审核状态已保存"); ctx.refresh(); }
-    catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items/${item.id}/review`, { status, eligibility: status === "rejected" ? null : eligibility.value });
+    modal.close(); toast("审核状态已保存"); ctx.refresh();
   });
 }
 
@@ -120,21 +125,18 @@ function scaffoldDialog(ctx, current) {
   const form = h("form", {}, field("主品牌", brand), field("业务品类", category), field("竞品（逗号分隔）", competitors),
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "预览 16 条候选题")));
   const modal = drawer("生成候选题", form, { wide: true });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const result = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/scaffold/preview`, { brand: brand.value, category: category.value, competitors: competitors.value.split(/[,，]/).map((value) => value.trim()).filter(Boolean) });
-      clear(modal.body);
-      const redact = checkbox("导入前脱敏", true, "替换邮箱与中国大陆手机号");
-      const importForm = h("form", {}, h("p", { class: "muted" }, result.note), dataTable(["Intent", "候选题", "类型"], result.items.map((item) => [item.canonical_intent_id, item.text, `${dimensions[item.dimension]} · ${item.query_type}`])),
-        redact.node, h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "加入当前草稿")));
-      modal.body.append(importForm);
-      importForm.addEventListener("submit", async (submitEvent) => {
-        submitEvent.preventDefault();
-        try { const added = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items`, { items: result.items, redact: redact.control.checked }); modal.close(); toast(`已加入 ${added.count} 条，跳过 ${added.duplicates.length} 条重复`); ctx.refresh(); }
-        catch (error) { formError(importForm, error); }
-      });
-    } catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    const result = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/scaffold/preview`, { brand: brand.value, category: category.value, competitors: competitors.value.split(/[,，]/).map((value) => value.trim()).filter(Boolean) });
+    clear(modal.body);
+    const redact = checkbox("导入前脱敏", true, "替换邮箱与中国大陆手机号");
+    const importForm = h("form", {}, h("p", { class: "muted" }, result.note), dataTable(["Intent", "候选题", "类型"], result.items.map((item) => [item.canonical_intent_id, item.text, `${dimensions[item.dimension]} · ${item.query_type}`])),
+      redact.node, h("div", { class: "form-actions sticky-actions" }, h("button", { class: "button", type: "submit" }, "加入当前草稿")));
+    modal.body.append(importForm);
+    modal.focus();
+    onSubmit(importForm, async () => {
+      const added = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items`, { items: result.items, redact: redact.control.checked });
+      modal.close(); toast(`已加入 ${added.count} 条，跳过 ${added.duplicates.length} 条重复`); ctx.refresh();
+    });
   });
 }
 
@@ -163,14 +165,11 @@ function importDialog(ctx, current) {
   const form = h("form", {}, field("JSON 数组或带表头 CSV", source, "必填 text、dimension；可含 canonical_intent_id、query_type、priority、eligibility 等字段", true), redact.node,
     h("div", { class: "form-actions" }, h("button", { class: "button", type: "submit" }, "校验并导入")));
   const modal = drawer("导入候选题", form, { wide: true });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const items = source.value.trim().startsWith("[") ? JSON.parse(source.value) : parseCsv(source.value);
-      if (!Array.isArray(items)) throw new Error("JSON 顶层必须是数组");
-      const result = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items`, { items, redact: redact.control.checked });
-      modal.close(); toast(`导入 ${result.count} 条，去重 ${result.duplicates.length} 条`); ctx.refresh();
-    } catch (error) { formError(form, error); }
+  onSubmit(form, async () => {
+    const items = source.value.trim().startsWith("[") ? JSON.parse(source.value) : parseCsv(source.value);
+    if (!Array.isArray(items)) throw new Error("JSON 顶层必须是数组");
+    const result = await api.post(`/api/projects/${ctx.project.id}/prompt-sets/${current.id}/items`, { items, redact: redact.control.checked });
+    modal.close(); toast(`导入 ${result.count} 条，去重 ${result.duplicates.length} 条`); ctx.refresh();
   });
 }
 

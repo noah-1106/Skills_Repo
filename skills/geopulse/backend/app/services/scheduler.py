@@ -12,6 +12,7 @@ from ..engine.compare import compare_metrics
 from ..engine.metrics import calculate_metrics
 from .measurement import create_run, load_run_samples
 from .retention import run_due_retention
+from .remeasurements import remind_due_consumer_rounds
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,7 @@ class Scheduler:
         while not self.stop_event.is_set():
             try:
                 run_due_schedules()
+                remind_due_consumer_rounds()
                 run_due_retention()
                 with transaction() as conn:
                     for project in all_rows(conn, "SELECT * FROM projects WHERE status='active'"):
